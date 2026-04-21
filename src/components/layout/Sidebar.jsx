@@ -3,9 +3,9 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { 
   LayoutDashboard, Users, UtensilsCrossed, FileText, 
-  ChefHat, ClipboardList, Wallet, LogOut, X,
+  ChefHat, ClipboardList, Wallet, LogOut, X, Tag,
   Bell, ShoppingBag, Coffee, Settings, HelpCircle,
-  ChevronLeft, Sparkles
+  ChevronLeft, Sparkles, QrCode
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx } from 'clsx';
@@ -30,7 +30,9 @@ const Sidebar = ({ isOpen, onClose }) => {
     const baseLinks = {
       admin: [
         { icon: LayoutDashboard, label: 'Dashboard', path: '/' },
+        { icon: QrCode, label: 'Mesas & QR', path: '/tables' },
         { icon: Users, label: 'Usuarios', path: '/users' },
+        { icon: Tag, label: 'Categorías', path: '/categories' },
         { icon: UtensilsCrossed, label: 'Menú', path: '/menu' },
         { icon: ClipboardList, label: 'Inventario', path: '/inventory' },
         { icon: FileText, label: 'Reportes', path: '/reports' },
@@ -159,7 +161,7 @@ const Sidebar = ({ isOpen, onClose }) => {
 
             {/* Navigation */}
             <nav className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
-              {links.map((link, index) => {
+               {links.map((link) => {
                 const isActive = location.pathname === link.path;
                 return (
                   <NavLink

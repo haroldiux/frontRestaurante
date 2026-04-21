@@ -6,49 +6,109 @@ import {
   UtensilsCrossed, Calendar, Download, Clock, Users, Award
 } from 'lucide-react';
 import { clsx } from 'clsx';
-import { RestaurantProvider, useRestaurant } from '../../context/RestaurantContext';
-
-// Datos simulados para el reporte
-const weeklyData = [
-  { day: 'Lun', sales: 1250, orders: 28 },
-  { day: 'Mar', sales: 1480, orders: 35 },
-  { day: 'Mié', sales: 1320, orders: 31 },
-  { day: 'Jue', sales: 1650, orders: 42 },
-  { day: 'Vie', sales: 2100, orders: 55 },
-  { day: 'Sáb', sales: 2450, orders: 68 },
-  { day: 'Dom', sales: 1980, orders: 52 },
-];
-
-const topProducts = [
-  { name: 'Filete Mignon', sales: 45, revenue: 2250 },
-  { name: 'Alitas BBQ', sales: 38, revenue: 950 },
-  { name: 'Ensalada César', sales: 32, revenue: 448 },
-  { name: 'Nachos Supreme', sales: 28, revenue: 350 },
-  { name: 'Limonada', sales: 52, revenue: 312 },
-];
+import api from '../../services/api';
 
 const AdminReportsContent = () => {
-  const { orders } = useRestaurant();
   const [period, setPeriod] = useState('week');
-
-  // Calcular estadísticas reales
-  const todayOrders = orders.filter(o => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return new Date(o.createdAt) >= today;
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [data, setData] = useState({
+    stats: { revenue: 0, orders: 0, avg_ticket: 0, clients: 0 },
+    changes: { revenue: 0, orders: 0, avg_ticket: 0, clients: 0 },
+    chart: [],
+    top_products: [],
+    types: { mesa: 0, llevar: 0 },
+    peaks: { lunch: 0, dinner: 0, snack: 0 }
+  });
+  const [customerData, setCustomerData] = useState({
+    topCustomers: [],
+    retention: { total_customers: 0, repeat_customers: 0, retention_rate: 0 }
   });
 
-  const totalRevenue = weeklyData.reduce((s, d) => s + d.sales, 0);
-  const totalOrders = weeklyData.reduce((s, d) => s + d.orders, 0);
-  const avgOrderValue = totalOrders > 0 ? Math.round(totalRevenue / totalOrders) : 0;
-  const maxSales = Math.max(...weeklyData.map(d => d.sales));
+  // Fetch Logic
+  React.useEffect(() => {
+    const transformReportData = (data) => {
+      const transformed = { ...data };
+      // Convert avg_ticket string to number
+      if (transformed.stats && typeof transformed.stats.avg_ticket === 'string') {
+          transformed.stats.avg_ticket = parseFloat(transformed.stats.avg_ticket.replace(',', '.'));
+      }
+      // Convert revenue to number (already integer but ensure)
+      if (transformed.stats && transformed.stats.revenue) {
+          transformed.stats.revenue = Number(transformed.stats.revenue);
+      }
+      // Ensure changes are numbers
+      if (transformed.changes && typeof transformed.changes === 'object') {
+          Object.keys(transformed.changes).forEach(key => {
+              if (typeof transformed.changes[key] === 'string') {
+                  transformed.changes[key] = parseFloat(transformed.changes[key].replace(',', '.'));
+              }
+          });
+      }
+      // Convert chart sales
+      if (transformed.chart && Array.isArray(transformed.chart)) {
+          transformed.chart = transformed.chart.map(day => ({
+              ...day,
+              sales: typeof day.sales === 'string' ? parseFloat(day.sales.replace(',', '.')) : Number(day.sales)
+          }));
+      }
+      // Convert top_products revenue
+      if (transformed.top_products && Array.isArray(transformed.top_products)) {
+          transformed.top_products = transformed.top_products.map(product => ({
+              ...product,
+              revenue: typeof product.revenue === 'string' ? parseFloat(product.revenue.replace(',', '.')) : Number(product.revenue)
+          }));
+      }
+      return transformed;
+    };
+
+    const transformCustomerData = (topRes, retentionRes) => {
+      return {
+        topCustomers: topRes.data.map(customer => ({
+          name: customer.customer_name || 'Cliente',
+          orderCount: customer.order_count,
+          totalSpent: parseFloat(String(customer.total_spent).replace(',', '.')),
+          lastOrder: customer.last_order_at,
+        })),
+        retention: {
+          total_customers: retentionRes.data.total_customers || 0,
+          repeat_customers: retentionRes.data.repeat_customers || 0,
+          retention_rate: parseFloat(String(retentionRes.data.retention_rate || 0).replace(',', '.')),
+        }
+      };
+    };
+
+    const fetchReports = async () => {
+        setLoading(true);
+        setError('');
+        try {
+            const [reportsRes, topCustomersRes, retentionRes] = await Promise.all([
+                api.get(`/reports?period=${period}`),
+                api.get(`/customers/top?period=${period}`),
+                api.get('/customers/retention')
+            ]);
+            setData(transformReportData(reportsRes.data));
+            setCustomerData(transformCustomerData(topCustomersRes, retentionRes));
+        } catch (error) {
+            console.error("Failed to fetch reports:", error);
+            setError('No se pudieron cargar los reportes. Verifica el backend y vuelve a intentar.');
+        } finally {
+            setLoading(false);
+        }
+    };
+    fetchReports();
+  }, [period]);
 
   const stats = [
-    { label: 'Ventas Totales', value: `Bs. ${totalRevenue.toLocaleString()}`, icon: DollarSign, color: 'emerald', change: '+12.5%' },
-    { label: 'Pedidos', value: totalOrders, icon: ShoppingBag, color: 'blue', change: '+8.2%' },
-    { label: 'Ticket Promedio', value: `Bs. ${avgOrderValue}`, icon: TrendingUp, color: 'amber', change: '+5.1%' },
-    { label: 'Clientes Únicos', value: 156, icon: Users, color: 'purple', change: '+15.3%' },
+    { label: 'Ventas Totales', value: `Bs. ${Number(data.stats.revenue).toLocaleString('es-BO')}`, icon: DollarSign, color: 'emerald', change: `${data.changes?.revenue >= 0 ? '+' : ''}${(data.changes?.revenue ?? 0).toFixed(1)}%` },
+    { label: 'Pedidos', value: data.stats.orders, icon: ShoppingBag, color: 'blue', change: `${data.changes?.orders >= 0 ? '+' : ''}${(data.changes?.orders ?? 0).toFixed(1)}%` },
+    { label: 'Ticket Promedio', value: `Bs. ${Number(data.stats.avg_ticket).toLocaleString('es-BO', {minimumFractionDigits: 2})}`, icon: TrendingUp, color: 'amber', change: `${data.changes?.avg_ticket >= 0 ? '+' : ''}${(data.changes?.avg_ticket ?? 0).toFixed(1)}%` },
+    { label: 'Clientes Únicos', value: data.stats.clients, icon: Users, color: 'purple', change: `${data.changes?.clients >= 0 ? '+' : ''}${(data.changes?.clients ?? 0).toFixed(1)}%` },
   ];
+
+  if(loading) return <div className="p-8 text-center text-gray-400">Cargando reportes...</div>;
+
+  const maxSales = Math.max(...(data.chart.map(d => d.sales) || [0]), 1);
 
   return (
     <div className="min-h-screen p-4 space-y-6">
@@ -93,6 +153,12 @@ const AdminReportsContent = () => {
       </div>
 
       {/* Stats Cards */}
+      {error ? (
+        <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+          {error}
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((stat, i) => {
           const Icon = stat.icon;
@@ -147,19 +213,21 @@ const AdminReportsContent = () => {
           
           {/* Bar Chart */}
           <div className="flex items-end justify-between h-48 gap-2">
-            {weeklyData.map((day, i) => (
-              <div key={day.day} className="flex-1 flex flex-col items-center gap-2">
-                <motion.div
-                  initial={{ height: 0 }}
-                  animate={{ height: `${(day.sales / maxSales) * 100}%` }}
-                  transition={{ delay: i * 0.1, duration: 0.5 }}
-                  className="w-full bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-lg relative group cursor-pointer"
-                >
-                  <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 bg-black/80 rounded text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                    Bs. {day.sales}
-                  </div>
-                </motion.div>
-                <span className="text-xs text-gray-500">{day.day}</span>
+            {data.chart.map((day, i) => (
+              <div key={day.day} className="h-full flex-1 flex flex-col items-center gap-2">
+                <div className="flex-1 w-full relative flex items-end group">
+                    <motion.div
+                      initial={{ height: 0 }}
+                      animate={{ height: `${(day.sales / maxSales) * 100}%` }}
+                      transition={{ delay: i * 0.1, duration: 0.5 }}
+                      className="w-full bg-gradient-to-t from-amber-600 to-amber-400 rounded-t-lg absolute bottom-0 left-0 right-0 mx-auto"
+                    >
+                      <div className="absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 bg-black/80 rounded text-xs text-white opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10 pointer-events-none">
+                         Bs. {Number(day.sales).toLocaleString('es-BO', {minimumFractionDigits: 2})}
+                      </div>
+                    </motion.div>
+                </div>
+                <span className="text-xs text-gray-500 font-medium">{day.day}</span>
               </div>
             ))}
           </div>
@@ -173,7 +241,7 @@ const AdminReportsContent = () => {
           </h3>
           
           <div className="space-y-3">
-            {topProducts.map((product, i) => (
+            {data.top_products.map((product, i) => (
               <motion.div
                 key={product.name}
                 initial={{ opacity: 0, x: 20 }}
@@ -195,7 +263,7 @@ const AdminReportsContent = () => {
                   <p className="text-xs text-gray-500">{product.sales} vendidos</p>
                 </div>
                 <span className="text-sm font-medium text-amber-400">
-                  Bs. {product.revenue}
+                   Bs. {Number(product.revenue).toLocaleString('es-BO', {minimumFractionDigits: 2})}
                 </span>
               </motion.div>
             ))}
@@ -214,14 +282,18 @@ const AdminReportsContent = () => {
           
           <div className="flex gap-4">
             <div className="flex-1 p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 text-center">
-              <p className="text-3xl font-bold text-blue-400">68%</p>
+              <p className="text-3xl font-bold text-blue-400">
+                  {Math.round((data.types.mesa / (data.stats.orders || 1)) * 100)}%
+              </p>
               <p className="text-sm text-gray-400 mt-1">En Restaurante</p>
-              <p className="text-xs text-gray-500">215 pedidos</p>
+              <p className="text-xs text-gray-500">{data.types.mesa} pedidos</p>
             </div>
             <div className="flex-1 p-4 rounded-xl bg-orange-500/10 border border-orange-500/20 text-center">
-              <p className="text-3xl font-bold text-orange-400">32%</p>
+              <p className="text-3xl font-bold text-orange-400">
+                 {Math.round((data.types.llevar / (data.stats.orders || 1)) * 100)}%
+              </p>
               <p className="text-sm text-gray-400 mt-1">Para Llevar</p>
-              <p className="text-xs text-gray-500">96 pedidos</p>
+              <p className="text-xs text-gray-500">{data.types.llevar} pedidos</p>
             </div>
           </div>
         </div>
@@ -235,10 +307,10 @@ const AdminReportsContent = () => {
           
           <div className="grid grid-cols-3 gap-3">
             {[
-              { time: '12:00 - 14:00', label: 'Almuerzo', orders: 85, color: 'amber' },
-              { time: '19:00 - 21:00', label: 'Cena', orders: 120, color: 'purple' },
-              { time: '15:00 - 17:00', label: 'Merienda', orders: 45, color: 'blue' },
-            ].map((peak, i) => (
+              { time: '12:00 - 14:00', label: 'Almuerzo', orders: data.peaks.lunch, color: 'amber' },
+              { time: '19:00 - 21:00', label: 'Cena', orders: data.peaks.dinner, color: 'purple' },
+              { time: '15:00 - 17:00', label: 'Merienda', orders: data.peaks.snack, color: 'blue' },
+             ].map((peak) => (
               <div 
                 key={peak.time}
                 className={clsx(
@@ -262,17 +334,89 @@ const AdminReportsContent = () => {
             ))}
           </div>
         </div>
-      </div>
-    </div>
+       </div>
+
+       {/* Customer Analytics Row */}
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-6">
+         {/* Top Customers */}
+         <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5">
+           <h3 className="font-semibold text-white flex items-center gap-2 mb-4">
+             <Users size={18} className="text-emerald-400" />
+             Top Clientes
+           </h3>
+           
+           <div className="space-y-3">
+             {customerData.topCustomers.slice(0, 5).map((customer, i) => (
+               <motion.div
+                 key={customer.name + i}
+                 initial={{ opacity: 0, x: 20 }}
+                 animate={{ opacity: 1, x: 0 }}
+                 transition={{ delay: i * 0.1 }}
+                 className="flex items-center gap-3"
+               >
+                 <span className={clsx(
+                   "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold",
+                   i === 0 && "bg-emerald-500 text-white",
+                   i === 1 && "bg-gray-400 text-white",
+                   i === 2 && "bg-orange-600 text-white",
+                   i > 2 && "bg-white/10 text-gray-400"
+                 )}>
+                   {i + 1}
+                 </span>
+                 <div className="flex-1 min-w-0">
+                   <p className="text-sm text-white truncate">{customer.name}</p>
+                   <p className="text-xs text-gray-500">{customer.orderCount} pedidos</p>
+                 </div>
+                 <span className="text-sm font-medium text-emerald-400">
+                   Bs. {Number(customer.totalSpent).toLocaleString('es-BO', {minimumFractionDigits: 2})}
+                 </span>
+               </motion.div>
+             ))}
+           </div>
+         </div>
+
+         {/* Customer Retention */}
+         <div className="p-6 rounded-2xl bg-white/[0.02] border border-white/5">
+           <h3 className="font-semibold text-white flex items-center gap-2 mb-4">
+             <TrendingUp size={18} className="text-purple-400" />
+             Retención de Clientes
+           </h3>
+           
+           <div className="space-y-6">
+             <div className="text-center">
+               <div className="text-4xl font-bold text-purple-400">
+                 {customerData.retention.retention_rate.toFixed(1)}%
+               </div>
+               <p className="text-sm text-gray-500 mt-1">Tasa de retención</p>
+             </div>
+             
+             <div className="grid grid-cols-2 gap-3">
+               <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                 <p className="text-2xl font-bold text-emerald-400">
+                   {customerData.retention.repeat_customers}
+                 </p>
+                 <p className="text-xs text-gray-400 mt-1">Clientes recurrentes</p>
+               </div>
+               <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-center">
+                 <p className="text-2xl font-bold text-blue-400">
+                   {customerData.retention.total_customers}
+                 </p>
+                 <p className="text-xs text-gray-400 mt-1">Total clientes</p>
+               </div>
+             </div>
+             
+             <div className="text-xs text-gray-500 text-center">
+               {customerData.retention.total_customers > 0 ? (
+                 <span>
+                   {Math.round((customerData.retention.repeat_customers / customerData.retention.total_customers) * 100)}% de clientes han vuelto
+                 </span>
+               ) : 'No hay datos suficientes'}
+             </div>
+           </div>
+         </div>
+       </div>
+     </div>
   );
 };
 
-const AdminReports = () => {
-  return (
-    <RestaurantProvider>
-      <AdminReportsContent />
-    </RestaurantProvider>
-  );
-};
-
-export default AdminReports;
+export default AdminReportsContent;

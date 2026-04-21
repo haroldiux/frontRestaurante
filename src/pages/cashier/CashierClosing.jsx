@@ -6,10 +6,10 @@ import {
   Download, AlertTriangle, TrendingUp, Calculator, Lock, Unlock
 } from 'lucide-react';
 import { clsx } from 'clsx';
-import { RestaurantProvider, useRestaurant } from '../../context/RestaurantContext';
+import { useRestaurant } from '../../context/RestaurantContext';
 
 const CashierClosingContent = () => {
-  const { orders, tables } = useRestaurant();
+  const { orders } = useRestaurant();
   const [showConfirm, setShowConfirm] = useState(false);
   const [isClosed, setIsClosed] = useState(false);
   const [closingData, setClosingData] = useState(null);
@@ -362,12 +362,4 @@ const CashierClosingContent = () => {
   );
 };
 
-const CashierClosing = () => {
-  return (
-    <RestaurantProvider>
-      <CashierClosingContent />
-    </RestaurantProvider>
-  );
-};
-
-export default CashierClosing;
+export default CashierClosingContent;

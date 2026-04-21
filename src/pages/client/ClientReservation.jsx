@@ -1,16 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Calendar, Users, MapPin, CreditCard, Send, ChevronLeft, ChevronRight, 
-  Upload, Check, X, Clock, Phone, MessageCircle, QrCode, Camera, Star
+  Upload, Check, X, Clock, Phone, MessageCircle, QrCode, Camera, Star,
+  Table
 } from 'lucide-react';
 import { clsx } from 'clsx';
-
-const ZONES = [
-  { id: 'salon', name: 'Salón Principal', icon: '🍽️', description: 'Ambiente clásico', capacity: '2-8 personas' },
-  { id: 'terraza', name: 'Terraza', icon: '🌿', description: 'Al aire libre', capacity: '2-6 personas' },
-  { id: 'vip', name: 'Sala VIP', icon: '⭐', description: 'Privado y exclusivo', capacity: '4-12 personas', premium: true },
-];
+import { useRestaurant } from '../../context/RestaurantContext';
 
 const TIME_SLOTS = [
   '12:00', '12:30', '13:00', '13:30', '14:00', '14:30',
@@ -18,15 +14,18 @@ const TIME_SLOTS = [
 ];
 
 const ClientReservation = () => {
+  const { checkReservationAvailability, createPublicReservation } = useRestaurant();
   const [step, setStep] = useState(1);
   const [selectedDate, setSelectedDate] = useState(null);
   const [selectedTime, setSelectedTime] = useState(null);
   const [guests, setGuests] = useState(2);
-  const [selectedZone, setSelectedZone] = useState(null);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [paymentProof, setPaymentProof] = useState(null);
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [availableTables, setAvailableTables] = useState([]);
+  const [selectedTableId, setSelectedTableId] = useState(null);
+  const [isCheckingAvailability, setIsCheckingAvailability] = useState(false);
 
   // Generar días del calendario
   const generateCalendarDays = () => {
@@ -83,13 +82,13 @@ const ClientReservation = () => {
   };
 
   const generateWhatsAppMessage = () => {
-    const zone = ZONES.find(z => z.id === selectedZone);
+    const selectedTable = availableTables.find(t => t.id === selectedTableId);
     const message = `🍽️ *Nueva Reserva - GUSTO Restaurant*
 
 📅 Fecha: ${formatDate(selectedDate)}
 🕐 Hora: ${selectedTime}
 👥 Personas: ${guests}
-📍 Zona: ${zone?.name}
+📍 Mesa: ${selectedTable ? `Mesa ${selectedTable.numero}` : 'No seleccionada'}
 
 👤 Nombre: ${customerName}
 📱 Teléfono: ${customerPhone}
@@ -108,15 +107,89 @@ const ClientReservation = () => {
     window.open(`https://wa.me/${whatsappNumber}?text=${message}`, '_blank');
   };
 
+  const submitReservation = async () => {
+    if (!selectedTableId || !selectedDate || !selectedTime || !customerName || !customerPhone) {
+      alert('Por favor completa todos los campos');
+      return;
+    }
+
+    const reservationDate = new Date(selectedDate);
+    const localDate = [
+      reservationDate.getFullYear(),
+      String(reservationDate.getMonth() + 1).padStart(2, '0'),
+      String(reservationDate.getDate()).padStart(2, '0'),
+    ].join('-');
+    const localReservationDateTime = `${localDate} ${selectedTime}:00`;
+
+    try {
+      const reservationData = {
+        mesa_id: selectedTableId,
+        nombre_cliente: customerName,
+        cantidad_personas: guests,
+        hora_reserva: localReservationDateTime,
+        telefono: customerPhone,
+        estado: 'pendiente'
+      };
+      await createPublicReservation(reservationData);
+      // Si éxito, abrir WhatsApp
+      handleWhatsAppSubmit();
+    } catch (error) {
+      console.error('Error creando reserva:', error);
+      alert('Hubo un error al crear la reserva. Por favor intenta nuevamente.');
+    }
+  };
+
   const canProceed = () => {
     switch (step) {
       case 1: return selectedDate && selectedTime;
-      case 2: return selectedZone;
+      case 2: return selectedTableId;
       case 3: return customerName && customerPhone;
       case 4: return paymentProof;
       default: return false;
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchAvailability = async () => {
+      if (step !== 2 || !selectedDate || !selectedTime || guests < 1) {
+        setIsCheckingAvailability(false);
+        return;
+      }
+
+      setIsCheckingAvailability(true);
+      try {
+        const fecha = selectedDate.toISOString().split('T')[0];
+        const result = await checkReservationAvailability(fecha, selectedTime, guests);
+
+        if (cancelled) {
+          return;
+        }
+
+        setAvailableTables(result.disponibles || []);
+        setSelectedTableId((current) =>
+          (result.disponibles || []).some((table) => table.id === current) ? current : null,
+        );
+      } catch (error) {
+        console.error('Error checking availability:', error);
+        if (!cancelled) {
+          setAvailableTables([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsCheckingAvailability(false);
+        }
+      }
+    };
+
+    const timeoutId = setTimeout(fetchAvailability, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [step, selectedDate, selectedTime, guests, checkReservationAvailability]);
 
   const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
                       'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -291,54 +364,62 @@ const ClientReservation = () => {
               </div>
             </div>
 
-            {/* Zone */}
+            {/* Mesas Disponibles */}
             <div>
               <div className="flex items-center gap-3 mb-4">
                 <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400">
-                  <MapPin size={24} />
+                  <Table size={24} />
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-white">Elige tu zona</h2>
+                  <h2 className="text-xl font-bold text-white">Elige una mesa</h2>
+                  <p className="text-sm text-gray-500">Mesas disponibles para {guests} personas</p>
                 </div>
               </div>
 
-              <div className="space-y-3">
-                {ZONES.map(zone => (
-                  <motion.button
-                    key={zone.id}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => setSelectedZone(zone.id)}
-                    className={clsx(
-                      "w-full p-4 rounded-2xl border transition-all text-left flex items-center gap-4",
-                      selectedZone === zone.id
-                        ? "bg-amber-500/20 border-amber-500/50"
-                        : "bg-white/[0.03] border-white/10 hover:border-white/20"
-                    )}
-                  >
-                    <span className="text-3xl">{zone.icon}</span>
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-white">{zone.name}</span>
-                        {zone.premium && (
-                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 text-xs">
-                            <Star size={10} className="inline mr-1" />Premium
+              {isCheckingAvailability ? (
+                <div className="p-8 text-center text-gray-500">Buscando mesas disponibles...</div>
+              ) : availableTables.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-white/[0.03] border border-white/10 text-center">
+                  <p className="text-gray-400">No hay mesas disponibles para la fecha y hora seleccionadas.</p>
+                  <p className="text-sm text-gray-500 mt-2">Intenta con otra hora o fecha.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {availableTables.map(table => (
+                    <motion.button
+                      key={table.id}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setSelectedTableId(table.id)}
+                      className={clsx(
+                        "w-full p-4 rounded-2xl border transition-all text-left flex items-center gap-4",
+                        selectedTableId === table.id
+                          ? "bg-amber-500/20 border-amber-500/50"
+                          : "bg-white/[0.03] border-white/10 hover:border-white/20"
+                      )}
+                    >
+                      <span className="text-3xl">🍽️</span>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-white">Mesa {table.numero}</span>
+                          <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-xs">
+                            {table.capacidad} personas
                           </span>
-                        )}
+                        </div>
+                        <p className="text-sm text-gray-500">Ubicación: {table.ubicacion_x}, {table.ubicacion_y}</p>
                       </div>
-                      <p className="text-sm text-gray-500">{zone.description} • {zone.capacity}</p>
-                    </div>
-                    <div className={clsx(
-                      "w-6 h-6 rounded-full border-2 flex items-center justify-center",
-                      selectedZone === zone.id
-                        ? "border-amber-500 bg-amber-500"
-                        : "border-gray-600"
-                    )}>
-                      {selectedZone === zone.id && <Check size={14} className="text-white" />}
-                    </div>
-                  </motion.button>
-                ))}
-              </div>
+                      <div className={clsx(
+                        "w-6 h-6 rounded-full border-2 flex items-center justify-center",
+                        selectedTableId === table.id
+                          ? "border-amber-500 bg-amber-500"
+                          : "border-gray-600"
+                      )}>
+                        {selectedTableId === table.id && <Check size={14} className="text-white" />}
+                      </div>
+                    </motion.button>
+                  ))}
+                </div>
+              )}
             </div>
           </motion.div>
         )}
@@ -502,10 +583,10 @@ const ClientReservation = () => {
               </div>
 
               <div className="flex items-center gap-3">
-                <MapPin size={18} className="text-amber-400" />
+                <Table size={18} className="text-amber-400" />
                 <div>
-                  <p className="text-xs text-gray-500">Zona</p>
-                  <p className="text-white font-medium">{ZONES.find(z => z.id === selectedZone)?.name}</p>
+                  <p className="text-xs text-gray-500">Mesa</p>
+                  <p className="text-white font-medium">Mesa {availableTables.find(t => t.id === selectedTableId)?.numero || 'No seleccionada'}</p>
                 </div>
               </div>
 
@@ -527,7 +608,7 @@ const ClientReservation = () => {
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={handleWhatsAppSubmit}
+              onClick={submitReservation}
               className="w-full py-4 rounded-2xl bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold flex items-center justify-center gap-3 shadow-lg shadow-green-500/25"
             >
               <MessageCircle size={24} />

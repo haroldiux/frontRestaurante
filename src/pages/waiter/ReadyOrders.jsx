@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { RestaurantProvider, useRestaurant } from '../../context/RestaurantContext';
+import { useRestaurant } from '../../context/RestaurantContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ChefHat, Clock, Check, Bell, UtensilsCrossed, 
@@ -229,12 +229,4 @@ const ReadyOrdersContent = () => {
   );
 };
 
-const ReadyOrders = () => {
-  return (
-    <RestaurantProvider>
-      <ReadyOrdersContent />
-    </RestaurantProvider>
-  );
-};
-
-export default ReadyOrders;
+export default ReadyOrdersContent;

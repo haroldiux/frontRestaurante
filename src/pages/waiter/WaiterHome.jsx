@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { RestaurantProvider, useRestaurant } from '../../context/RestaurantContext';
+import { useRestaurant } from '../../context/RestaurantContext';
 import { useAuth } from '../../context/AuthContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -14,7 +14,6 @@ const WaiterHomeContent = () => {
   const { 
     tables, 
     orders, 
-    getActiveCallsCount, 
     getWaitingTime,
     getTableOrders,
     getTableTotal,
@@ -33,8 +32,7 @@ const WaiterHomeContent = () => {
   const myOccupiedTables = myTables.filter(t => t.status === 'occupied');
   
   // Todas las mesas para estadísticas generales
-  const allOccupied = tables.filter(t => t.status === 'occupied');
-  const allReserved = tables.filter(t => t.status === 'reserved');
+
   const allFree = tables.filter(t => t.status === 'free');
   
   // Llamadas solo en MIS mesas
@@ -284,12 +282,4 @@ const WaiterHomeContent = () => {
   );
 };
 
-const WaiterHome = () => {
-  return (
-    <RestaurantProvider>
-      <WaiterHomeContent />
-    </RestaurantProvider>
-  );
-};
-
-export default WaiterHome;
+export default WaiterHomeContent;

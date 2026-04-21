@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -6,7 +6,7 @@ import {
   ShoppingBag, UtensilsCrossed, User, Timer, Award, BarChart3, ClipboardList
 } from 'lucide-react';
 import { clsx } from 'clsx';
-import { RestaurantProvider, useRestaurant } from '../../context/RestaurantContext';
+import { useRestaurant } from '../../context/RestaurantContext';
 
 const KitchenHistoryContent = () => {
   const { orders } = useRestaurant();
@@ -30,8 +30,19 @@ const KitchenHistoryContent = () => {
   const dineInCount = todayOrders.filter(o => o.orderType !== 'takeaway').length;
   const takeawayCount = todayOrders.filter(o => o.orderType === 'takeaway').length;
   
-  // Calcular tiempo promedio (simulado - sería la diferencia entre createdAt y readyAt)
-  const avgTime = todayOrders.length > 0 ? Math.floor(8 + Math.random() * 7) : 0;
+  // Calcular tiempo promedio real (diferencia entre createdAt y readyAt)
+  const avgTime = todayOrders.length > 0 ? 
+    (() => {
+      const ordersWithReady = todayOrders.filter(o => o.readyAt);
+      if (ordersWithReady.length === 0) return 0;
+      const totalMinutes = ordersWithReady.reduce((sum, o) => {
+        const created = new Date(o.createdAt);
+        const ready = new Date(o.readyAt);
+        return sum + ((ready - created) / (1000 * 60));
+      }, 0);
+      return Math.round(totalMinutes / ordersWithReady.length);
+    })() 
+    : 0;
   
   // Total de items preparados
   const totalItems = todayOrders.reduce((sum, o) => 
@@ -228,12 +239,4 @@ const KitchenHistoryContent = () => {
   );
 };
 
-const KitchenHistory = () => {
-  return (
-    <RestaurantProvider>
-      <KitchenHistoryContent />
-    </RestaurantProvider>
-  );
-};
-
-export default KitchenHistory;
+export default KitchenHistoryContent;

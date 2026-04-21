@@ -71,7 +71,7 @@ const TableMap = () => {
           glow: 'hover:shadow-emerald-500/20',
           label: 'Libre'
         };
-      case 'occupied':
+      case 'occupied': {
         // Si la mesa es mía, mostrar diferente
         const isMine = table.assignedWaiter?.id === user?.id;
         return {
@@ -81,6 +81,7 @@ const TableMap = () => {
           glow: isMine ? 'hover:shadow-amber-500/20' : 'hover:shadow-red-500/20',
           label: isMine ? 'Mi mesa' : 'Ocupada'
         };
+      }
       case 'reserved':
         if (timeInfo?.status === 'waiting') {
           return {

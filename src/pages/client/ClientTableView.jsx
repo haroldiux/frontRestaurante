@@ -1,400 +1,622 @@
-import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Receipt, Bell, Check, ChefHat, Sparkles, QrCode, CreditCard } from 'lucide-react';
+import {
+  Bell,
+  Check,
+  ChefHat,
+  CreditCard,
+  Minus,
+  Phone,
+  Plus,
+  QrCode,
+  Receipt,
+  ShoppingBag,
+  Sparkles,
+  User,
+} from 'lucide-react';
 import { clsx } from 'clsx';
+import { useRestaurant } from '../../context/RestaurantContext';
+import MockCardCheckoutModal from '../../components/payments/MockCardCheckoutModal';
 
-// Storage key igual que RestaurantContext
-const STORAGE_KEY = 'restaurant_data';
+const PAYMENT_OPTIONS = [
+  {
+    id: 'qr',
+    label: 'Pago con QR',
+    description: 'Escanea con tu banco',
+    color: 'from-blue-500 to-blue-600',
+    icon: QrCode,
+  },
+  {
+    id: 'cash',
+    label: 'Pago en efectivo',
+    description: 'Entrega al personal',
+    color: 'from-amber-500 to-orange-600',
+    icon: Receipt,
+  },
+  {
+    id: 'card',
+    label: 'Pago con tarjeta',
+    description: 'Checkout simulado en mesa',
+    color: 'from-purple-500 to-pink-600',
+    icon: CreditCard,
+  },
+];
 
 const ClientTableView = () => {
-  const { tableNumber } = useParams();
+  const { tableUuid } = useParams();
+  const [searchParams] = useSearchParams();
+  const {
+    getPublicTableByUuid,
+    beginPublicTableSession,
+    getStoredPublicSession,
+    clearPublicTableSession,
+    getPublicMenu,
+    createPublicOrder,
+    callPublic,
+    paymentPublic,
+    startPublicCardCheckout,
+  } = useRestaurant();
+
+  const signature = searchParams.get('sig') || '';
   const [table, setTable] = useState(null);
+  const [menu, setMenu] = useState([]);
+  const [cart, setCart] = useState([]);
+  const [customerName, setCustomerName] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [isActivating, setIsActivating] = useState(false);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [confirmationMessage, setConfirmationMessage] = useState('Solicitud enviada');
+  const [error, setError] = useState(null);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [paymentStep, setPaymentStep] = useState('select');
+  const [selectedMethod, setSelectedMethod] = useState('qr');
+  const [mockSession, setMockSession] = useState(null);
+  const [paymentCompleted, setPaymentCompleted] = useState(false);
 
-  // Cargar datos de la mesa
   useEffect(() => {
-    const loadTable = () => {
-      const savedData = localStorage.getItem(STORAGE_KEY);
-      if (savedData) {
-        const parsed = JSON.parse(savedData);
-        const foundTable = parsed.tables?.find(t => t.number === parseInt(tableNumber));
-        setTable(foundTable || null);
+    const loadData = async () => {
+      if (!tableUuid) {
+        setError('Mesa no encontrada');
+        setIsLoading(false);
+        return;
       }
-      setIsLoading(false);
-    };
 
-    loadTable();
+      try {
+        setIsLoading(true);
 
-    // Escuchar cambios en tiempo real
-    const handleStorageChange = (e) => {
-      if (e.key === STORAGE_KEY) loadTable();
-    };
-    window.addEventListener('storage', handleStorageChange);
-    
-    // Polling cada 2s para detectar cambios (mismo tab)
-    const interval = setInterval(loadTable, 2000);
-    
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      clearInterval(interval);
-    };
-  }, [tableNumber]);
+        const storedSession = getStoredPublicSession();
+        const hasStoredSession = storedSession?.tableUuid === tableUuid;
+        const mesa = await getPublicTableByUuid(tableUuid, hasStoredSession ? null : signature);
+        const publicMenu = await getPublicMenu();
 
-  // Auto-ocupar mesa al cargar si está libre
-  useEffect(() => {
-    if (table && table.status === 'free') {
-      const savedData = localStorage.getItem(STORAGE_KEY);
-      if (savedData) {
-        const parsed = JSON.parse(savedData);
-        const updatedTables = parsed.tables.map(t => {
-          if (t.number === parseInt(tableNumber)) {
-            return {
-              ...t,
-              status: 'occupied',
-              occupiedSince: new Date().toISOString(),
-            };
-          }
-          return t;
-        });
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, tables: updatedTables }));
-        setTable(prev => prev ? { ...prev, status: 'occupied', occupiedSince: new Date().toISOString() } : null);
-      }
-    }
-  }, [table?.status, tableNumber]);
-
-  const handleCallWaiter = (type) => {
-    const savedData = localStorage.getItem(STORAGE_KEY);
-    if (savedData) {
-      const parsed = JSON.parse(savedData);
-      const updatedTables = parsed.tables.map(t => {
-        if (t.number === parseInt(tableNumber)) {
-          return {
-            ...t,
-            callRequest: {
-              type,
-              timestamp: new Date().toISOString(),
-            },
-          };
+        if (!mesa) {
+          setError('No se pudo validar esta mesa');
+          return;
         }
-        return t;
+
+        setTable(mesa);
+        setMenu(publicMenu);
+        setSessionReady(Boolean(hasStoredSession));
+        setError(null);
+      } catch (loadError) {
+        console.error('Error loading public table module:', loadError);
+        setError('No se pudo cargar la experiencia de la mesa');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadData();
+  }, [tableUuid, signature, getPublicMenu, getPublicTableByUuid, getStoredPublicSession]);
+
+  const hasPendingPayment = Boolean(table?.pendingPayment?.amount);
+  const cartTotal = useMemo(
+    () => cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0),
+    [cart],
+  );
+
+  const pushConfirmation = (message) => {
+    setConfirmationMessage(message);
+    setShowConfirmation(true);
+    setTimeout(() => setShowConfirmation(false), 3000);
+  };
+
+  const updateCart = (product, delta) => {
+    setCart((previous) => {
+      const existing = previous.find((item) => item.product.id === product.id);
+      if (!existing && delta > 0) {
+        return [...previous, { product, quantity: 1 }];
+      }
+
+      if (!existing) {
+        return previous;
+      }
+
+      const nextQuantity = existing.quantity + delta;
+      if (nextQuantity <= 0) {
+        return previous.filter((item) => item.product.id !== product.id);
+      }
+
+      return previous.map((item) =>
+        item.product.id === product.id ? { ...item, quantity: nextQuantity } : item,
+      );
+    });
+  };
+
+  const refreshPublicTable = async () => {
+    if (!tableUuid) {
+      return;
+    }
+
+    const freshTable = await getPublicTableByUuid(tableUuid);
+    if (freshTable) {
+      setTable(freshTable);
+    }
+  };
+
+  const handleStartSession = async () => {
+    if (!tableUuid || !signature) {
+      setError('El QR no es valido o esta incompleto');
+      return;
+    }
+
+    try {
+      setIsActivating(true);
+      const mesa = await beginPublicTableSession(tableUuid, signature);
+      setTable(mesa);
+      setSessionReady(true);
+      setError(null);
+    } catch (activationError) {
+      console.error('Error starting public session:', activationError);
+      setError(activationError?.response?.data?.message || 'No se pudo activar la mesa');
+      clearPublicTableSession();
+      setSessionReady(false);
+    } finally {
+      setIsActivating(false);
+    }
+  };
+
+  const handleCallWaiter = async (type) => {
+    if (!tableUuid) return;
+
+    try {
+      await callPublic(tableUuid, type);
+      setTable((previous) =>
+        previous
+          ? {
+              ...previous,
+              callRequest: { type, timestamp: new Date() },
+            }
+          : previous,
+      );
+      pushConfirmation(type === 'bill' ? 'Cuenta solicitada' : 'Mesero notificado');
+    } catch (callError) {
+      console.error('Error calling waiter:', callError);
+      setError(callError?.response?.data?.message || 'No se pudo enviar la solicitud');
+    }
+  };
+
+  const handleSubmitOrder = async () => {
+    if (!tableUuid || cart.length === 0) return;
+
+    try {
+      setIsSubmittingOrder(true);
+      await createPublicOrder(tableUuid, {
+        customer_name: customerName || null,
+        items: cart.map((item) => ({
+          product_id: item.product.id,
+          quantity: item.quantity,
+          notes: null,
+        })),
       });
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, tables: updatedTables }));
-      setShowConfirmation(true);
-      setTimeout(() => setShowConfirmation(false), 3000);
+
+      setCart([]);
+      pushConfirmation('Pedido enviado a cocina');
+      await refreshPublicTable();
+    } catch (orderError) {
+      console.error('Error sending public order:', orderError);
+      setError(orderError?.response?.data?.message || 'No se pudo enviar el pedido');
+    } finally {
+      setIsSubmittingOrder(false);
+    }
+  };
+
+  const handlePayment = async (method) => {
+    if (!tableUuid || !table?.pendingPayment) return;
+
+    if (method === 'card') {
+      try {
+        if (!table.pendingPayment.id) {
+          setError('No existe una transaccion pendiente para esta mesa');
+          return;
+        }
+
+        const session = await startPublicCardCheckout(table.pendingPayment.id);
+        if (session?.checkout_token) {
+          setMockSession(session);
+        }
+      } catch (paymentError) {
+        console.error('Error creating public card checkout:', paymentError);
+        setError(paymentError?.response?.data?.message || 'No se pudo iniciar el pago con tarjeta');
+      }
+
+      return;
+    }
+
+    try {
+      await paymentPublic(tableUuid, table.pendingPayment.amount, method);
+      setTable((previous) =>
+        previous
+          ? {
+              ...previous,
+              pendingPayment: {
+                ...previous.pendingPayment,
+                clientPaid: true,
+                method,
+                paidAt: new Date(),
+              },
+            }
+          : previous,
+      );
+      pushConfirmation('Pago enviado para validacion');
+      setPaymentStep('select');
+    } catch (paymentError) {
+      console.error('Error sending public payment:', paymentError);
+      setError(paymentError?.response?.data?.message || 'No se pudo registrar el pago');
     }
   };
 
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#080809] via-[#0c0c0f] to-[#0a0a0d] flex items-center justify-center">
-        <div className="text-amber-500">Cargando...</div>
+        <div className="text-amber-500">Cargando mesa...</div>
       </div>
     );
   }
 
-  if (!table) {
+  if (error || !table) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#080809] via-[#0c0c0f] to-[#0a0a0d] flex items-center justify-center p-6">
-        <div className="text-center">
-          <div className="text-6xl mb-4">🍽️</div>
-          <h1 className="text-2xl font-bold text-white mb-2">Mesa no encontrada</h1>
-          <p className="text-gray-500">Esta mesa no existe en el sistema</p>
+      <div className="min-h-screen bg-gradient-to-br from-[#080809] via-[#0c0c0f] to-[#0a0a0d] flex items-center justify-center px-6">
+        <div className="max-w-md text-center">
+          <h2 className="text-2xl font-bold text-white mb-3">No pudimos abrir tu mesa</h2>
+          <p className="text-gray-400">{error || 'La mesa no existe o el QR ya no es valido.'}</p>
         </div>
       </div>
     );
   }
 
-  const hasActiveCall = table.callRequest && table.callRequest.type;
-  const hasPendingPayment = table.pendingPayment && table.pendingPayment.amount;
+  if (paymentCompleted) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#080809] via-[#0c0c0f] to-[#0a0a0d] text-white flex items-center justify-center px-6">
+        <div className="max-w-md text-center space-y-5">
+          <div className="inline-flex items-center justify-center w-24 h-24 rounded-full bg-emerald-500/15 border border-emerald-500/30">
+            <Check size={48} className="text-emerald-400" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold mb-2">Pago confirmado</h1>
+            <p className="text-gray-400">
+              La cuenta de la mesa {table.number} fue cerrada correctamente. Gracias por tu visita.
+            </p>
+          </div>
+          <p className="text-sm text-gray-500">Puedes cerrar esta pantalla cuando quieras.</p>
+        </div>
+      </div>
+    );
+  }
 
-  // Si hay pago pendiente con QR, mostrar pantalla de pago
   if (hasPendingPayment) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#080809] via-[#0c0c0f] to-[#0a0a0d] text-white flex flex-col">
-        {/* Header */}
         <div className="p-6 text-center">
-          <motion.div
-            initial={{ scale: 0.9, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/20 border border-blue-500/30 rounded-full mb-4"
-          >
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-blue-500/20 border border-blue-500/30 rounded-full mb-4">
             <CreditCard size={16} className="text-blue-400" />
-            <span className="text-blue-400 font-medium text-sm">Pago Pendiente</span>
-          </motion.div>
-
-          <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.1 }}
-          >
-            <h1 className="text-3xl font-bold text-white mb-2">Mesa {table.number}</h1>
-            <p className="text-gray-500">Escanea el código QR para pagar</p>
-          </motion.div>
+            <span className="text-blue-400 font-medium text-sm">Pago pendiente</span>
+          </div>
+          <h1 className="text-3xl font-bold mb-2">Mesa {table.number}</h1>
+          <p className="text-gray-500">Completa el pago para cerrar la cuenta</p>
         </div>
 
-        {/* QR Payment Section */}
         <div className="flex-1 px-6 py-4 flex flex-col items-center justify-center gap-6">
-          {/* Amount */}
-          <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ delay: 0.2 }}
-            className="text-center"
-          >
+          <div className="text-center">
             <p className="text-gray-400 text-sm mb-1">Total a pagar</p>
             <p className="text-5xl font-bold text-white">Bs. {table.pendingPayment.amount.toFixed(2)}</p>
-          </motion.div>
+          </div>
 
-          {/* QR Code (simulated) */}
-          <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ delay: 0.3 }}
-            className="p-6 bg-white rounded-3xl shadow-2xl"
-          >
-            <div className="w-48 h-48 bg-gradient-to-br from-gray-100 to-gray-200 rounded-2xl flex items-center justify-center relative overflow-hidden">
-              {/* Simulated QR pattern */}
-              <div className="absolute inset-4 grid grid-cols-8 gap-1">
-                {Array.from({ length: 64 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className={clsx(
-                      "rounded-sm",
-                      Math.random() > 0.5 ? "bg-gray-900" : "bg-transparent"
-                    )}
-                  />
-                ))}
+          {table.pendingPayment.clientPaid ? (
+            <>
+              <div className="p-8 bg-white/[0.03] border border-emerald-500/30 rounded-3xl">
+                <Check size={64} className="text-emerald-500" />
               </div>
-              {/* Center logo */}
-              <div className="absolute w-12 h-12 bg-white rounded-lg flex items-center justify-center shadow-md z-10">
-                <QrCode size={24} className="text-blue-500" />
-              </div>
+              <p className="text-sm text-emerald-400/80 text-center">
+                Tu pago fue enviado. Caja lo confirmara en breve.
+              </p>
+            </>
+          ) : paymentStep === 'select' ? (
+            <div className="w-full max-w-md space-y-3">
+              {PAYMENT_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  onClick={() => {
+                    setSelectedMethod(option.id);
+                    setPaymentStep('pay');
+                  }}
+                  className={`w-full p-5 rounded-3xl bg-gradient-to-r ${option.color} flex items-center gap-4 text-left`}
+                >
+                  <div className="p-3 bg-white/20 rounded-2xl">
+                    <option.icon size={28} />
+                  </div>
+                  <div>
+                    <p className="text-xl font-bold">{option.label}</p>
+                    <p className="text-sm text-white/80">{option.description}</p>
+                  </div>
+                </button>
+              ))}
             </div>
-          </motion.div>
+          ) : (
+            <>
+              <div className="p-8 bg-white/[0.03] border border-white/10 rounded-3xl text-center w-full max-w-md">
+                <div className="w-44 h-44 mx-auto bg-white rounded-3xl p-5 mb-5 flex items-center justify-center">
+                  {selectedMethod === 'card' ? (
+                    <CreditCard size={92} className="text-slate-900" />
+                  ) : (
+                    <QrCode size={92} className="text-slate-900" />
+                  )}
+                </div>
+                <p className="text-white font-semibold mb-2">
+                  {selectedMethod === 'qr'
+                    ? 'Escanea y paga'
+                    : selectedMethod === 'cash'
+                      ? 'Paga al mesero'
+                      : 'Checkout con tarjeta'}
+                </p>
+                <p className="text-sm text-gray-400">
+                  {selectedMethod === 'qr'
+                    ? 'Usa la app de tu banco para confirmar.'
+                    : selectedMethod === 'cash'
+                      ? 'El personal pasara a recoger el pago.'
+                      : 'Abriremos una pasarela simulada con token temporal.'}
+                </p>
+              </div>
 
-          {/* Instructions */}
-          <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.4 }}
-            className="text-center max-w-xs"
-          >
-            <p className="text-gray-400 text-sm">
-              Escanea con la app de tu banco para completar el pago
-            </p>
-          </motion.div>
-
-          {/* Status indicator */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5 }}
-            className="flex items-center gap-2 text-blue-400"
-          >
-            <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-            <span className="text-sm">Esperando pago...</span>
-          </motion.div>
-
-          {/* Simulate Payment Button (for demo) */}
-          <motion.button
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.6 }}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => {
-              // Marcar pago como "pagado por cliente" - esperando confirmación de caja
-              const savedData = localStorage.getItem(STORAGE_KEY);
-              if (savedData) {
-                const parsed = JSON.parse(savedData);
-                const updatedTables = parsed.tables.map(t => {
-                  if (t.number === parseInt(tableNumber)) {
-                    return {
-                      ...t,
-                      pendingPayment: {
-                        ...t.pendingPayment,
-                        clientPaid: true,
-                        paidAt: new Date().toISOString(),
-                        method: 'qr'
-                      }
-                    };
-                  }
-                  return t;
-                });
-                localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, tables: updatedTables }));
-              }
-            }}
-            className={clsx(
-              "px-6 py-3 rounded-xl font-semibold flex items-center gap-2",
-              table.pendingPayment?.clientPaid 
-                ? "bg-emerald-500 text-white cursor-default"
-                : "bg-gradient-to-r from-blue-500 to-blue-600 text-white"
-            )}
-            disabled={table.pendingPayment?.clientPaid}
-          >
-            {table.pendingPayment?.clientPaid ? (
-              <>
-                <Check size={18} />
-                Pago Enviado - Esperando Caja
-              </>
-            ) : (
-              <>
-                <QrCode size={18} />
-                Simular Pago Completado
-              </>
-            )}
-          </motion.button>
-
-          {table.pendingPayment?.clientPaid && (
-            <motion.p
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="text-sm text-emerald-400/70 text-center"
-            >
-              ✓ Tu pago fue enviado. El cajero lo confirmará en breve.
-            </motion.p>
+              <button
+                onClick={() => handlePayment(selectedMethod)}
+                className="px-6 py-3 rounded-xl font-semibold flex items-center gap-2 bg-gradient-to-r from-blue-500 to-blue-600"
+              >
+                <Receipt size={18} />
+                {selectedMethod === 'card' ? 'Abrir checkout' : 'Confirmar que ya pague'}
+              </button>
+              <button
+                onClick={() => setPaymentStep('select')}
+                className="text-sm text-gray-500 hover:text-gray-300"
+              >
+                Cambiar metodo de pago
+              </button>
+            </>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="p-6 text-center">
-          <p className="text-xs text-gray-600">Powered by Gusto POS</p>
-        </div>
+        <MockCardCheckoutModal
+          open={Boolean(mockSession)}
+          session={mockSession}
+          scope="public"
+          amount={table.pendingPayment.amount}
+          title={`Tarjeta - Mesa ${table.number}`}
+          onClose={() => setMockSession(null)}
+          onSuccess={() => {
+            setMockSession(null);
+            clearPublicTableSession();
+            setPaymentCompleted(true);
+          }}
+        />
       </div>
     );
   }
 
-  // Vista normal de la mesa
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#080809] via-[#0c0c0f] to-[#0a0a0d] text-white flex flex-col">
-      {/* Confirmation Toast */}
+    <div className="min-h-screen bg-gradient-to-br from-[#080809] via-[#0c0c0f] to-[#0a0a0d] text-white">
       <AnimatePresence>
         {showConfirmation && (
           <motion.div
-            initial={{ opacity: 0, y: -50 }}
+            initial={{ opacity: 0, y: -40 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -50 }}
+            exit={{ opacity: 0, y: -40 }}
             className="fixed top-6 left-4 right-4 z-50"
           >
-            <div className="bg-emerald-500 text-white rounded-2xl p-4 flex items-center gap-3 shadow-xl shadow-emerald-500/25">
-              <div className="p-2 bg-white/20 rounded-full">
-                <Check size={20} />
-              </div>
-              <div>
-                <p className="font-semibold">¡Solicitud enviada!</p>
-                <p className="text-sm text-emerald-100">El mesero viene en camino</p>
+            <div className="bg-emerald-500 text-white rounded-2xl p-4 shadow-xl shadow-emerald-500/25">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white/20 rounded-full">
+                  <Check size={18} />
+                </div>
+                <p className="font-semibold">{confirmationMessage}</p>
               </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Header */}
-      <div className="p-6 text-center">
-        <motion.div
-          initial={{ scale: 0.9, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500/20 border border-amber-500/30 rounded-full mb-4"
-        >
-          <Sparkles size={16} className="text-amber-400" />
-          <span className="text-amber-400 font-medium text-sm">Gusto Restaurant</span>
-        </motion.div>
-
-        <motion.div
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.1 }}
-        >
-          <h1 className="text-5xl font-bold text-white mb-2">Mesa {table.number}</h1>
-          <p className="text-gray-500">¡Bienvenido! ¿En qué podemos ayudarte?</p>
-        </motion.div>
-      </div>
-
-      {/* Main Actions */}
-      <div className="flex-1 px-6 py-4 flex flex-col gap-4">
-        {/* Listo para ordenar */}
-        <motion.button
-          initial={{ x: -50, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => handleCallWaiter('order')}
-          disabled={hasActiveCall && table.callRequest?.type === 'order'}
-          className={clsx(
-            "relative flex-1 min-h-[140px] rounded-3xl p-6 flex flex-col items-center justify-center gap-3 transition-all overflow-hidden",
-            hasActiveCall && table.callRequest?.type === 'order'
-              ? "bg-emerald-500/20 border-2 border-emerald-500"
-              : "bg-gradient-to-br from-amber-500 to-orange-600 shadow-xl shadow-amber-500/25"
-          )}
-        >
-          {hasActiveCall && table.callRequest?.type === 'order' ? (
-            <>
-              <div className="absolute inset-0 bg-emerald-500/10 animate-pulse" />
-              <Check size={48} className="text-emerald-400" />
-              <span className="text-xl font-bold text-emerald-400">Mesero en camino</span>
-              <span className="text-sm text-emerald-300">Ya recibimos tu solicitud</span>
-            </>
-          ) : (
-            <>
-              <Bell size={48} className="text-white" />
-              <span className="text-2xl font-bold text-white">Listo para Ordenar</span>
-              <span className="text-sm text-white/80">Llamar al mesero</span>
-            </>
-          )}
-        </motion.button>
-
-        {/* Pedir la cuenta */}
-        <motion.button
-          initial={{ x: 50, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          onClick={() => handleCallWaiter('bill')}
-          disabled={hasActiveCall && table.callRequest?.type === 'bill'}
-          className={clsx(
-            "relative min-h-[100px] rounded-3xl p-6 flex items-center justify-center gap-4 transition-all",
-            hasActiveCall && table.callRequest?.type === 'bill'
-              ? "bg-emerald-500/20 border-2 border-emerald-500"
-              : "bg-white/[0.03] border-2 border-white/10 hover:border-white/20"
-          )}
-        >
-          {hasActiveCall && table.callRequest?.type === 'bill' ? (
-            <>
-              <Check size={32} className="text-emerald-400" />
-              <span className="text-lg font-bold text-emerald-400">Cuenta solicitada</span>
-            </>
-          ) : (
-            <>
-              <Receipt size={32} className="text-amber-400" />
-              <span className="text-lg font-bold text-white">Pedir la Cuenta</span>
-            </>
-          )}
-        </motion.button>
-      </div>
-
-      {/* Status Info */}
-      <motion.div
-        initial={{ y: 50, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.4 }}
-        className="p-6"
-      >
-        <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10">
-          <div className="flex items-center gap-3 text-gray-400 text-sm">
-            <ChefHat size={18} className="text-amber-500" />
-            <span>Disfruta tu experiencia en Gusto</span>
+      <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+        <div className="text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500/20 border border-amber-500/30 rounded-full mb-4">
+            <Sparkles size={16} className="text-amber-400" />
+            <span className="text-amber-400 font-medium text-sm">Gusto Bolivia</span>
           </div>
+          <h1 className="text-4xl font-bold mb-2">Mesa {table.number}</h1>
+          <p className="text-gray-500">
+            {sessionReady
+              ? 'Tu mesa esta lista para pedir, llamar al personal y pagar.'
+              : 'Confirma que estas en esta mesa para iniciar tu experiencia.'}
+          </p>
         </div>
 
-        {/* Footer branding */}
-        <div className="mt-6 text-center">
-          <p className="text-xs text-gray-600">Powered by Gusto POS</p>
-        </div>
-      </motion.div>
+        {!sessionReady ? (
+          <div className="max-w-xl mx-auto p-6 rounded-3xl bg-white/[0.03] border border-white/10 text-center space-y-4">
+            <ChefHat size={48} className="mx-auto text-amber-400" />
+            <h2 className="text-2xl font-bold">Estas en Mesa {table.number}?</h2>
+            <p className="text-gray-400">
+              Al confirmar activaremos tu sesion de mesa para que puedas pedir desde el menu y comunicarte con el personal.
+            </p>
+            <button
+              onClick={handleStartSession}
+              disabled={isActivating}
+              className={clsx(
+                'px-6 py-3 rounded-2xl font-semibold',
+                isActivating
+                  ? 'bg-white/10 text-gray-500 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-amber-500 to-orange-600 text-white',
+              )}
+            >
+              {isActivating ? 'Activando mesa...' : 'Si, comenzar en esta mesa'}
+            </button>
+          </div>
+        ) : (
+          <div className="grid lg:grid-cols-[1.3fr_0.9fr] gap-6">
+            <div className="space-y-6">
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/10">
+                <div className="flex items-center gap-3 mb-4">
+                  <User size={18} className="text-amber-400" />
+                  <p className="font-semibold">Nombre opcional para tu pedido</p>
+                </div>
+                <input
+                  type="text"
+                  value={customerName}
+                  onChange={(event) => setCustomerName(event.target.value)}
+                  placeholder="Ej. Familia Quispe"
+                  className="w-full px-4 py-3 rounded-2xl bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-amber-500/50"
+                />
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-4">
+                <button
+                  onClick={() => handleCallWaiter('order')}
+                  className="p-5 rounded-3xl bg-gradient-to-br from-amber-500 to-orange-600 text-white flex items-center gap-4"
+                >
+                  <Bell size={28} />
+                  <div className="text-left">
+                    <p className="text-lg font-bold">Llamar al mesero</p>
+                    <p className="text-sm text-white/80">Quiero ordenar o ayuda</p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleCallWaiter('bill')}
+                  className="p-5 rounded-3xl bg-white/[0.03] border border-white/10 flex items-center gap-4"
+                >
+                  <Phone size={28} className="text-emerald-400" />
+                  <div className="text-left">
+                    <p className="text-lg font-bold">Pedir la cuenta</p>
+                    <p className="text-sm text-gray-400">Avisar a caja o salon</p>
+                  </div>
+                </button>
+              </div>
+
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/10">
+                <div className="flex items-center gap-3 mb-4">
+                  <ShoppingBag size={18} className="text-amber-400" />
+                  <p className="font-semibold">Menu para pedir desde tu mesa</p>
+                </div>
+                <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {menu.map((product) => {
+                    const cartItem = cart.find((item) => item.product.id === product.id);
+                    return (
+                      <div key={product.id} className="p-4 rounded-2xl bg-white/5 border border-white/10">
+                        <img
+                          src={product.image}
+                          alt={product.name}
+                          className="w-full h-32 object-cover rounded-xl mb-3"
+                        />
+                        <div className="space-y-2">
+                          <div>
+                            <p className="font-semibold">{product.name}</p>
+                            <p className="text-xs text-gray-500">{product.category}</p>
+                          </div>
+                          <p className="text-emerald-400 font-bold">Bs. {product.price.toFixed(2)}</p>
+                          <div className="flex items-center justify-between">
+                            <button
+                              onClick={() => updateCart(product, -1)}
+                              className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center"
+                            >
+                              <Minus size={16} />
+                            </button>
+                            <span className="font-semibold">{cartItem?.quantity || 0}</span>
+                            <button
+                              onClick={() => updateCart(product, 1)}
+                              className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center"
+                            >
+                              <Plus size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              <div className="p-5 rounded-3xl bg-white/[0.03] border border-white/10 sticky top-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <ShoppingBag size={18} className="text-amber-400" />
+                  <p className="font-semibold">Tu pedido</p>
+                </div>
+
+                {cart.length === 0 ? (
+                  <p className="text-gray-500 text-sm">Agrega productos del menu para enviar tu pedido.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {cart.map((item) => (
+                      <div
+                        key={item.product.id}
+                        className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-white/5"
+                      >
+                        <div>
+                          <p className="font-medium">{item.product.name}</p>
+                          <p className="text-xs text-gray-500">Bs. {item.product.price.toFixed(2)} c/u</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-semibold">{item.quantity}x</p>
+                          <p className="text-xs text-emerald-400">
+                            Bs. {(item.quantity * item.product.price).toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="pt-3 border-t border-white/10 flex items-center justify-between">
+                      <span className="text-gray-400">Total</span>
+                      <span className="text-2xl font-bold text-white">Bs. {cartTotal.toFixed(2)}</span>
+                    </div>
+
+                    <button
+                      onClick={handleSubmitOrder}
+                      disabled={isSubmittingOrder}
+                      className={clsx(
+                        'w-full py-3 rounded-2xl font-semibold',
+                        isSubmittingOrder
+                          ? 'bg-white/10 text-gray-500 cursor-not-allowed'
+                          : 'bg-gradient-to-r from-amber-500 to-orange-600 text-white',
+                      )}
+                    >
+                      {isSubmittingOrder ? 'Enviando pedido...' : 'Enviar pedido a cocina'}
+                    </button>
+                  </div>
+                )}
+
+                <div className="mt-6 p-4 rounded-2xl bg-blue-500/10 border border-blue-500/20">
+                  <div className="flex items-center gap-2 text-blue-400 mb-1">
+                    <Phone size={14} />
+                    <span className="text-sm font-medium">Estado de sesion</span>
+                  </div>
+                  <p className="text-xs text-blue-200/80">
+                    Tu sesion de mesa seguira activa mientras la cuenta este abierta.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

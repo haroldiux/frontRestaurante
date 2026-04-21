@@ -5,7 +5,7 @@ import {
   ShoppingBag, UtensilsCrossed, Phone
 } from 'lucide-react';
 import { clsx } from 'clsx';
-import { RestaurantProvider, useRestaurant } from '../../context/RestaurantContext';
+import { useRestaurant } from '../../context/RestaurantContext';
 
 const KitchenContent = () => {
   const { orders, updateOrderStatus } = useRestaurant();
@@ -18,20 +18,6 @@ const KitchenContent = () => {
     (o.status === 'pending' || o.status === 'preparing') && o.status !== 'paid'
   );
   const readyOrders = orders.filter(o => o.status === 'ready');
-
-  // Actualizar tiempo cada segundo
-  useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Sonido de notificación cuando llega pedido nuevo
-  useEffect(() => {
-    if (kitchenOrders.length > prevOrdersCount.current && soundEnabled && prevOrdersCount.current > 0) {
-      playNotification();
-    }
-    prevOrdersCount.current = kitchenOrders.length;
-  }, [kitchenOrders.length, soundEnabled]);
 
   const playNotification = () => {
     try {
@@ -57,10 +43,24 @@ const KitchenContent = () => {
         osc2.start();
         osc2.stop(audioContext.currentTime + 0.2);
       }, 200);
-    } catch (e) {
+    } catch {
       console.log('Audio not supported');
     }
   };
+
+  // Actualizar tiempo cada segundo
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Sonido de notificación cuando llega pedido nuevo
+  useEffect(() => {
+    if (kitchenOrders.length > prevOrdersCount.current && soundEnabled && prevOrdersCount.current > 0) {
+      playNotification();
+    }
+    prevOrdersCount.current = kitchenOrders.length;
+  }, [kitchenOrders.length, soundEnabled]);
 
   // Calcular tiempo transcurrido
   const getElapsedTime = (createdAt) => {
@@ -250,7 +250,7 @@ const KitchenContent = () => {
                   {order.items.map((item, idx) => {
                     const takeawayQty = item.takeawayQty || 0;
                     const dineInQty = item.quantity - takeawayQty;
-                    const hasMixed = takeawayQty > 0 && dineInQty > 0;
+
                     
                     return (
                       <div key={idx} className="flex items-start gap-2">
@@ -367,12 +367,4 @@ const KitchenContent = () => {
   );
 };
 
-const KitchenDashboard = () => {
-  return (
-    <RestaurantProvider>
-      <KitchenContent />
-    </RestaurantProvider>
-  );
-};
-
-export default KitchenDashboard;
+export default KitchenContent;

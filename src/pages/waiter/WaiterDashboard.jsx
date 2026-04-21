@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { RestaurantProvider, useRestaurant } from '../../context/RestaurantContext';
+import { useRestaurant } from '../../context/RestaurantContext';
 import TableMap from '../../components/waiter/TableMap';
 import ProductMenu from '../../components/waiter/ProductMenu';
 import OrderCart from '../../components/waiter/OrderCart';
@@ -194,12 +194,4 @@ const WaiterDashboardContent = () => {
   );
 };
 
-const WaiterDashboard = () => {
-  return (
-    <RestaurantProvider>
-      <WaiterDashboardContent />
-    </RestaurantProvider>
-  );
-};
-
-export default WaiterDashboard;
+export default WaiterDashboardContent;

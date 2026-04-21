@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { 
   DollarSign, TrendingUp, Utensils, Users, AlertTriangle, Package, 
@@ -7,65 +7,92 @@ import {
   AlertCircle, CheckCircle, RefreshCw, ShoppingBag, UtensilsCrossed
 } from 'lucide-react';
 import { clsx } from 'clsx';
-import { RestaurantProvider, useRestaurant } from '../../context/RestaurantContext';
+import { useRestaurant } from '../../context/RestaurantContext';
+import api from '../../services/api';
 
-// Datos simulados para demo (los que no están en el contexto aún)
-const customerStats = {
-  sessions: 845,
-  customerRate: 5.12,
-  firstTime: 65,
-  returning: 35,
-};
 
-const dailyRevenue = [
-  { day: 'Lun', amount: 2800 },
-  { day: 'Mar', amount: 3500 },
-  { day: 'Mié', amount: 2900 },
-  { day: 'Jue', amount: 4200 },
-  { day: 'Vie', amount: 5800 },
-  { day: 'Sáb', amount: 7200 },
-  { day: 'Dom', amount: 5100 },
-];
 
-const customerFlow = [
-  { day: 'Lun', restaurant: 45, delivery: 28 },
-  { day: 'Mar', restaurant: 52, delivery: 35 },
-  { day: 'Mié', restaurant: 48, delivery: 42 },
-  { day: 'Jue', restaurant: 65, delivery: 38 },
-  { day: 'Vie', restaurant: 85, delivery: 55 },
-  { day: 'Sáb', restaurant: 95, delivery: 68 },
-  { day: 'Dom', restaurant: 78, delivery: 52 },
-];
 
-const recentActivity = [
-  { time: '10:10', message: 'Nuevo pedido para llevar #1234', user: 'Juan P.', type: 'order' },
-  { time: '08:40', message: 'Mesa 5 pagó su cuenta', user: 'Carlos M.', type: 'payment' },
-  { time: '07:10', message: 'Pedido #1230 entregado', user: 'Delivery', type: 'delivery' },
-  { time: '01:15', message: 'Nueva reseña 5 estrellas', user: 'María G.', type: 'review' },
-];
 
-const customerReviews = [
-  { name: 'Stepni Doe', date: 'hace 3 días', rating: 5, comment: 'Excelente comida y atención, el filete estaba perfecto.' },
-  { name: 'Rehan Doe', date: 'hace 4 días', rating: 4, comment: 'Muy buena experiencia, el delivery llegó a tiempo.' },
-];
 
-const inventoryItems = [
-  { id: 1, name: 'Carne de Res', stock: 5, minStock: 10, unit: 'kg', status: 'critical' },
-  { id: 2, name: 'Cerveza', stock: 8, minStock: 15, unit: 'cajas', status: 'low' },
-  { id: 3, name: 'Aceite Vegetal', stock: 3, minStock: 10, unit: 'L', status: 'critical' },
-  { id: 4, name: 'Pollo', stock: 12, minStock: 8, unit: 'kg', status: 'ok' },
-];
-
-const staffData = [
-  { id: 1, name: 'Carlos M.', role: 'Mesero', checkIn: '08:30', tips: 250, status: 'working' },
-  { id: 2, name: 'María G.', role: 'Mesera', checkIn: '08:45', tips: 180, status: 'working' },
-  { id: 3, name: 'Luis R.', role: 'Delivery', checkIn: '12:00', tips: 120, status: 'working' },
-];
 
 const AdminContent = () => {
-  const { orders, tables, products, getOrderStats } = useRestaurant();
+  const { orders, tables, products, ingredients, getOrderStats } = useRestaurant();
+  const [customerStats, setCustomerStats] = useState({ sessions: 0, customerRate: 0, firstTime: 0, returning: 0 });
+  const [customerReviews, setCustomerReviews] = useState([]);
+  const [staffData, setStaffData] = useState([]);
+  const [loading, setLoading] = useState(false);
+
   const stats = getOrderStats();
-  
+
+  const mapRoleToSpanish = (role) => {
+    const roleMap = {
+      'admin': 'Administrador',
+      'waiter': 'Mesero',
+      'kitchen': 'Cocina',
+      'cashier': 'Cajero',
+      'delivery': 'Delivery'
+    };
+    return roleMap[role] || role;
+  };
+
+  const fetchDashboardData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await api.get('/dashboard');
+      const data = response.data;
+      setCustomerStats(data.customerStats);
+      setCustomerReviews(data.recentReviews);
+      
+      // Mapear roles del backend a nombres en español para mostrar
+      const staffWithTranslatedRoles = data.staff.map(staff => ({
+        ...staff,
+        role: mapRoleToSpanish(staff.role)
+      }));
+      setStaffData(staffWithTranslatedRoles);
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  // Inventario real
+  const inventoryItems = ingredients.map(ing => ({
+    id: ing.id,
+    name: ing.name,
+    stock: ing.stock,
+    minStock: ing.minStock,
+    unit: ing.unit,
+    status: ing.stock <= ing.minStock * 0.3 ? 'critical' : ing.stock <= ing.minStock * 0.5 ? 'low' : 'ok'
+  }));
+
+  // Actividad reciente basada en pedidos
+  const recentActivity = orders.slice()
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+    .slice(0, 4)
+    .map(order => {
+      const time = new Date(order.createdAt).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' });
+      let message = '';
+      let user = order.customerName || 'Cliente';
+      let type = 'order';
+      if (order.status === 'paid') {
+        message = `Mesa ${order.tableNumber} pagó su cuenta`;
+        type = 'payment';
+      } else if (order.status === 'ready') {
+        message = `Pedido #${order.id} listo para servir`;
+        type = 'delivery';
+      } else {
+        message = `Nuevo pedido ${order.orderType === 'takeaway' ? 'para llevar' : 'en mesa'} #${order.id}`;
+        type = 'order';
+      }
+      return { time, message, user, type };
+    });
+
   // Calcular ocupación real de mesas
   const occupiedTables = tables.filter(t => t.status === 'occupied').length;
   const reservedTables = tables.filter(t => t.status === 'reserved').length;
@@ -97,8 +124,7 @@ const AdminContent = () => {
     ));
   };
 
-  const maxRevenue = Math.max(...dailyRevenue.map(d => d.amount));
-  const maxFlow = Math.max(...customerFlow.map(d => Math.max(d.restaurant, d.delivery)));
+
 
   return (
     <div className="min-h-screen p-4 lg:p-6 space-y-6">
@@ -108,9 +134,13 @@ const AdminContent = () => {
           <h1 className="text-2xl font-bold text-white">Panel de Control</h1>
           <p className="text-sm text-gray-500">Vista ejecutiva • {new Date().toLocaleDateString('es-BO', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-gray-400 hover:text-white transition-colors">
-          <RefreshCw size={16} />
-          <span className="text-sm">Actualizar</span>
+        <button 
+          onClick={fetchDashboardData}
+          disabled={loading}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-gray-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
+          <span className="text-sm">{loading ? "Cargando..." : "Actualizar"}</span>
         </button>
       </div>
 
@@ -477,7 +507,7 @@ const AdminContent = () => {
               <span className="text-xs text-gray-500">activos</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-amber-400 font-bold">Bs. {staffData.reduce((a, s) => a + s.tips, 0)}</span>
+              <span className="text-sm text-amber-400 font-bold">Bs. {staffData.reduce((a, s) => a + s.tips, 0).toLocaleString('es-BO')}</span>
               <span className="text-xs text-gray-500">propinas</span>
             </div>
           </div>
@@ -486,7 +516,7 @@ const AdminContent = () => {
           {staffData.map(person => (
             <div 
               key={person.id}
-              className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-center"
+              className="p-3 rounded-xl bg-white/[0.02] border border-white/5 text-center group"
             >
               <div className={clsx(
                 "w-10 h-10 mx-auto rounded-full flex items-center justify-center text-sm font-bold mb-2",
@@ -496,7 +526,20 @@ const AdminContent = () => {
               </div>
               <p className="text-sm text-white">{person.name}</p>
               <p className="text-[10px] text-gray-500">{person.role}</p>
-              <p className="text-xs text-amber-400 mt-1">Bs. {person.tips}</p>
+              <div className="mt-1 space-y-0.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-500">Pedidos:</span>
+                  <span className="text-emerald-400 font-bold">{person.stats?.orders_today || 0}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-500">Ventas:</span>
+                  <span className="text-amber-400 font-bold">Bs. {Number(person.stats?.sales_today || 0).toLocaleString('es-BO')}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-500">Propinas:</span>
+                  <span className="text-purple-400 font-bold">Bs. {person.tips}</span>
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -505,12 +548,4 @@ const AdminContent = () => {
   );
 };
 
-const AdminDashboard = () => {
-  return (
-    <RestaurantProvider>
-      <AdminContent />
-    </RestaurantProvider>
-  );
-};
-
-export default AdminDashboard;
+export default AdminContent;

@@ -14,9 +14,11 @@ import ClientTableView from '../pages/client/ClientTableView';
 import AdminDashboard from '../pages/admin/AdminDashboard';
 import AdminUsers from '../pages/admin/AdminUsers';
 import AdminMenu from '../pages/admin/AdminMenu';
+import AdminCategories from '../pages/admin/AdminCategories';
 import AdminReports from '../pages/admin/AdminReports';
 import AdminSettings from '../pages/admin/AdminSettings';
 import AdminInventory from '../pages/admin/AdminInventory';
+import AdminTablesQrPage from '../pages/admin/AdminTablesQrPage';
 import CashierDashboard from '../pages/cashier/CashierDashboard';
 import CashierClosing from '../pages/cashier/CashierClosing';
 import PlaceholderPage from '../pages/PlaceholderPage';
@@ -57,7 +59,7 @@ const AppRoutes = () => {
       <Route path="/login" element={<Login />} />
       
       {/* Ruta PÚBLICA para cliente (QR de mesa) */}
-      <Route path="/table/:tableNumber" element={<ClientTableView />} />
+      <Route path="/table/:tableUuid" element={<ClientTableView />} />
       
       <Route path="/" element={
         <ProtectedRoute>
@@ -77,7 +79,9 @@ const AppRoutes = () => {
         <Route path="reservations" element={<ClientReservation />} />
         {/* Rutas específicas de admin */}
         <Route path="users" element={<AdminUsers />} />
+        <Route path="tables" element={<AdminTablesQrPage />} />
         <Route path="menu" element={<AdminMenu />} />
+        <Route path="categories" element={<AdminCategories />} />
         <Route path="reports" element={<AdminReports />} />
         <Route path="settings" element={<AdminSettings />} />
         <Route path="inventory" element={<AdminInventory />} />

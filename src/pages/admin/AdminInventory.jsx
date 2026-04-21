@@ -1,92 +1,200 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ArrowLeft, Package, Plus, Search, Edit2, Trash2, 
-  AlertTriangle, Clock, X, Save, Scale
+  AlertTriangle, Clock, X, Save, Scale, Loader2, Calendar
 } from 'lucide-react';
 import { clsx } from 'clsx';
-import { RestaurantProvider, useRestaurant } from '../../context/RestaurantContext';
+import api from '../../services/api';
+import { toast } from 'sonner';
 
-const categories = [
-  { id: 'all', label: 'Todos', emoji: '📦' },
-  { id: 'perecedero', label: 'Perecederos', emoji: '🥩' },
-  { id: 'no_perecedero', label: 'No Perecederos', emoji: '📦' },
+const categoryConfig = {
+  perecedero: { label: 'Perecederos', emoji: '🥩' },
+  no_perecedero: { label: 'No Perecederos', emoji: '📦' },
+};
+
+const EMOJI_LIST = [
+  '🥩', '🍗', '🍖', '🥓', '🍔', '🌭', // Carnes
+  '🥬', '🥦', '🥕', '🌽', '🥔', '🍅', '🍆', '🌶️', '🍄', '🧅', '🧄', // Verduras
+  '🍎', '🍌', '🍇', '🍊', '🍋', '🍍', '🍓', '🍒', '🥑', // Frutas
+  '🥚', '🧀', '🥛', '🧈', '🍞', '🥐', // Lacteos/Pan
+  '🍚', '🍝', '🍜', '🍱', '🥣', // Platos/Granos
+  '🧂', '🥫', '🍶', '🍾', '🍷', '🍺', '🍻', '🥃', '🥤', '🧃', '🧉', // Bebidas/Condimentos
+  '🧊', '🍫', '🍬', '🍪', '📦', '🥡' // Otros
 ];
 
-const AdminInventoryContent = () => {
-  const { 
-    ingredients, 
-    setIngredients, 
-    getLowStockIngredients, 
-    getExpiringIngredients 
-  } = useRestaurant();
+const AdminInventory = () => {
+  const [ingredients, setIngredients] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterCategory, setFilterCategory] = useState('all');
+  
   const [showModal, setShowModal] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  
+  // Backend Keys: nombre, categoria_id, unidad_medida, stock_actual, stock_minimo, costo_unitario, fecha_vencimiento, icono
   const [formData, setFormData] = useState({ 
-    name: '', unit: 'kg', category: 'perecedero', 
-    stock: '', minStock: '', expiryDate: '', costPerUnit: '' 
+    nombre: '', categoria_id: '', unidad_medida: 'kg', 
+    stock_actual: '', stock_minimo: '', costo_unitario: '', fecha_vencimiento: '', icono: '' 
   });
+  const [formLoading, setFormLoading] = useState(false);
 
-  const lowStockItems = getLowStockIngredients();
-  const expiringItems = getExpiringIngredients();
+  const formatQuantity = (val) => {
+    const num = parseFloat(val);
+    return isNaN(num) ? '0' : num.toString();
+  };
+
+  const fetchData = async () => {
+      try {
+          const [ingRes, catRes] = await Promise.all([
+              api.get('/ingredients'),
+              api.get('/categories') // We will filter 'inventario' type locally
+          ]);
+          setIngredients(ingRes.data);
+          // Filter categories for inventory only
+          setCategories(catRes.data.filter(c => c.tipo === 'inventario'));
+      } catch (error) {
+          console.error("Error loading inventory:", error);
+          toast.error("Error al cargar inventario");
+      } finally {
+          setLoading(false);
+      }
+  };
+
+  useEffect(() => {
+      fetchData();
+  }, []);
+
+  const getLowStockItems = () => ingredients.filter(i => parseFloat(i.stock_actual) <= parseFloat(i.stock_minimo));
+
+  const getExpiringItems = () => {
+      const today = new Date();
+      const in7Days = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
+      return ingredients.filter(i => {
+          if (!i.fecha_vencimiento || i.categoria?.nombre === 'no_perecedero') return false;
+          const expiry = new Date(i.fecha_vencimiento);
+          return expiry > today && expiry <= in7Days;
+      });
+  };
+  
+  const getExpiredItems = () => {
+    return ingredients.filter(i => {
+        if (!i.fecha_vencimiento || i.categoria?.nombre === 'no_perecedero') return false;
+        return new Date(i.fecha_vencimiento) < new Date();
+    });
+  };
+
+  const lowStockItems = getLowStockItems();
+  const expiringItems = getExpiringItems();
+  const expiredItems = getExpiredItems(); // Also good to showing expired ones separately maybe?
 
   const filteredIngredients = ingredients.filter(ing => {
-    const matchSearch = ing.name.toLowerCase().includes(search.toLowerCase());
-    const matchCategory = filterCategory === 'all' || ing.category === filterCategory;
+    const catName = ing.categoria?.nombre || '';
+    const matchSearch = ing.nombre.toLowerCase().includes(search.toLowerCase());
+    const matchCategory = filterCategory === 'all' || catName === filterCategory;
     return matchSearch && matchCategory;
   });
 
   const handleOpenModal = (item = null) => {
     if (item) {
       setEditingItem(item);
-      setFormData(item);
+      setFormData({ 
+          nombre: item.nombre, 
+          categoria_id: item.categoria_id, 
+          unidad_medida: item.unidad_medida, 
+          stock_actual: item.stock_actual, 
+          stock_minimo: item.stock_minimo, 
+          costo_unitario: item.costo_unitario || '', 
+          fecha_vencimiento: item.fecha_vencimiento || '',
+          icono: item.icono || ''
+      });
     } else {
       setEditingItem(null);
-      setFormData({ name: '', unit: 'kg', category: 'perecedero', stock: '', minStock: '', expiryDate: '', costPerUnit: '' });
+      // Default category
+      const defaultCat = categories.find(c => c.nombre === 'perecedero')?.id || (categories[0]?.id || '');
+      setFormData({ 
+          nombre: '', categoria_id: defaultCat, unidad_medida: 'kg', 
+          stock_actual: '', stock_minimo: '', costo_unitario: '', fecha_vencimiento: '', icono: '' 
+      });
     }
     setShowModal(true);
   };
 
-  const handleSave = () => {
-    if (!formData.name || !formData.stock) return;
-    
-    const itemData = {
-      ...formData,
-      stock: parseFloat(formData.stock),
-      minStock: parseFloat(formData.minStock) || 0,
-      costPerUnit: parseFloat(formData.costPerUnit) || 0,
-    };
-    
-    if (editingItem) {
-      setIngredients(prev => prev.map(i => i.id === editingItem.id ? { ...itemData, id: i.id } : i));
-    } else {
-      setIngredients(prev => [...prev, { ...itemData, id: Date.now() }]);
+  const handleSave = async () => {
+    if (!formData.nombre || !formData.stock_actual || !formData.categoria_id) {
+        toast.error("Complete campos obligatorios");
+        return;
     }
-    setShowModal(false);
+    
+    setFormLoading(true);
+    try {
+        const payload = { 
+            ...formData, 
+            stock_actual: parseFloat(formData.stock_actual),
+            stock_minimo: parseFloat(formData.stock_minimo),
+            costo_unitario: parseFloat(formData.costo_unitario) || 0
+        };
+        
+        if (editingItem) {
+            const res = await api.put(`/ingredients/${editingItem.id}`, payload);
+            setIngredients(prev => prev.map(i => i.id === editingItem.id ? res.data : i));
+            toast.success("Ingrediente actualizado");
+        } else {
+            const res = await api.post('/ingredients', payload);
+            setIngredients(prev => [...prev, res.data]);
+            toast.success("Ingrediente creado");
+        }
+        setShowModal(false);
+    } catch (error) {
+        console.error("Error save:", error);
+        toast.error("Error al guardar ingrediente");
+    } finally {
+        setFormLoading(false);
+    }
   };
 
-  const handleDelete = (itemId) => {
-    if (confirm('¿Eliminar este ingrediente?')) {
-      setIngredients(prev => prev.filter(i => i.id !== itemId));
+  const handleDelete = async (itemId) => {
+    if (confirm('¿Eliminar este ingrediente permanentemente?')) {
+        try {
+            await api.delete(`/ingredients/${itemId}`);
+            setIngredients(prev => prev.filter(i => i.id !== itemId));
+            toast.success("Ingrediente eliminado");
+        } catch (error) {
+            console.error("Error delete:", error);
+            toast.error("Error al eliminar");
+        }
     }
   };
-
-  const isLowStock = (ing) => ing.stock <= ing.minStock;
-  const isExpiring = (ing) => {
-    const today = new Date();
-    const in7Days = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
-    return new Date(ing.expiryDate) <= in7Days;
-  };
-  const isExpired = (ing) => new Date(ing.expiryDate) < new Date();
 
   const getDaysUntilExpiry = (expiryDate) => {
+    if (!expiryDate) return 999;
     const today = new Date();
     const expiry = new Date(expiryDate);
     const diff = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
     return diff;
+  };
+
+  const isExpired = (ing) => {
+      if (!ing.fecha_vencimiento) return false;
+      return new Date(ing.fecha_vencimiento) < new Date();
+  };
+
+  const CategoryButton = ({ cat, selected, onClick }) => {
+      const config = categoryConfig[cat.nombre] || { label: cat.nombre, emoji: '📦' };
+      return (
+        <button
+            onClick={onClick}
+            className={clsx(
+            "px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1",
+            selected ? "bg-amber-500 text-white" : "bg-white/5 text-gray-400"
+            )}
+        >
+            <span>{config.emoji}</span>
+            <span>{config.label}</span>
+        </button>
+      )
   };
 
   return (
@@ -115,7 +223,7 @@ const AdminInventoryContent = () => {
       </div>
 
       {/* Alerts */}
-      {(lowStockItems.length > 0 || expiringItems.length > 0) && (
+      {(lowStockItems.length > 0 || expiringItems.length > 0 || expiredItems.length > 0) && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {lowStockItems.length > 0 && (
             <motion.div
@@ -130,14 +238,14 @@ const AdminInventoryContent = () => {
               <div className="flex flex-wrap gap-2">
                 {lowStockItems.slice(0, 5).map(ing => (
                   <span key={ing.id} className="px-2 py-1 rounded bg-red-500/20 text-xs text-red-400">
-                    {ing.name}: {ing.stock} {ing.unit}
+                    {ing.nombre}: {ing.stock_actual} {ing.unidad_medida}
                   </span>
                 ))}
               </div>
             </motion.div>
           )}
           
-          {expiringItems.length > 0 && (
+          {(expiringItems.length > 0 || expiredItems.length > 0) && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -145,17 +253,19 @@ const AdminInventoryContent = () => {
             >
               <div className="flex items-center gap-2 text-amber-400 mb-2">
                 <Clock size={18} />
-                <span className="font-semibold">Por Vencer ({expiringItems.length})</span>
+                <span className="font-semibold">Vencimientos ({expiringItems.length + expiredItems.length})</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                {expiringItems.slice(0, 5).map(ing => {
-                  const days = getDaysUntilExpiry(ing.expiryDate);
+                {expiredItems.slice(0, 3).map(ing => (
+                    <span key={ing.id} className="px-2 py-1 rounded text-xs bg-red-500/20 text-red-400 font-bold">
+                        {ing.nombre}: VENCIDO
+                    </span>
+                ))}
+                {expiringItems.slice(0, 3).map(ing => {
+                  const days = getDaysUntilExpiry(ing.fecha_vencimiento);
                   return (
-                    <span key={ing.id} className={clsx(
-                      "px-2 py-1 rounded text-xs",
-                      days <= 0 ? "bg-red-500/20 text-red-400" : "bg-amber-500/20 text-amber-400"
-                    )}>
-                      {ing.name}: {days <= 0 ? 'VENCIDO' : `${days} días`}
+                    <span key={ing.id} className="px-2 py-1 rounded text-xs bg-amber-500/20 text-amber-400">
+                      {ing.nombre}: {days} días
                     </span>
                   );
                 })}
@@ -177,20 +287,24 @@ const AdminInventoryContent = () => {
             className="w-full pl-10 pr-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:border-amber-500/50"
           />
         </div>
-        <div className="flex gap-1 p-1 bg-white/5 rounded-xl">
-          {categories.map(cat => (
+        <div className="flex gap-1 p-1 bg-white/5 rounded-xl overflow-x-auto">
             <button
-              key={cat.id}
-              onClick={() => setFilterCategory(cat.id)}
-              className={clsx(
-                "px-3 py-1.5 rounded-lg text-sm font-medium transition-all flex items-center gap-1",
-                filterCategory === cat.id ? "bg-amber-500 text-white" : "text-gray-400"
-              )}
+                onClick={() => setFilterCategory('all')}
+                className={clsx(
+                "px-3 py-1.5 rounded-lg text-sm font-medium transition-all whitespace-nowrap",
+                filterCategory === 'all' ? "bg-amber-500 text-white" : "text-gray-400"
+                )}
             >
-              <span>{cat.emoji}</span>
-              <span>{cat.label}</span>
+                Todos
             </button>
-          ))}
+            {categories.map(cat => (
+                <CategoryButton 
+                    key={cat.id} 
+                    cat={cat} 
+                    selected={filterCategory === cat.nombre} 
+                    onClick={() => setFilterCategory(cat.nombre)} 
+                />
+            ))}
         </div>
       </div>
 
@@ -203,7 +317,7 @@ const AdminInventoryContent = () => {
         </div>
         <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20">
           <Scale size={20} className="text-emerald-400 mb-2" />
-          <p className="text-2xl font-bold text-white">{ingredients.filter(i => i.stock > i.minStock).length}</p>
+          <p className="text-2xl font-bold text-white">{ingredients.filter(i => parseFloat(i.stock_actual) > parseFloat(i.stock_minimo)).length}</p>
           <p className="text-xs text-gray-500">Stock OK</p>
         </div>
         <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20">
@@ -219,6 +333,11 @@ const AdminInventoryContent = () => {
       </div>
 
       {/* Ingredients List */}
+      {loading ? (
+        <div className="flex justify-center p-12">
+            <Loader2 className="animate-spin text-amber-500" size={40} />
+        </div>
+      ) : (
       <div className="space-y-2">
         <AnimatePresence>
           {filteredIngredients.map((ing, idx) => (
@@ -232,9 +351,9 @@ const AdminInventoryContent = () => {
                 "p-4 rounded-xl border flex items-center justify-between",
                 isExpired(ing) 
                   ? "bg-red-500/10 border-red-500/30" 
-                  : isLowStock(ing)
+                  : parseFloat(ing.stock_actual) <= parseFloat(ing.stock_minimo)
                     ? "bg-orange-500/10 border-orange-500/30"
-                    : isExpiring(ing)
+                    : (ing.fecha_vencimiento && getDaysUntilExpiry(ing.fecha_vencimiento) <= 7)
                       ? "bg-amber-500/10 border-amber-500/30"
                       : "bg-white/[0.02] border-white/5"
               )}
@@ -242,24 +361,24 @@ const AdminInventoryContent = () => {
               <div className="flex items-center gap-4">
                 <div className={clsx(
                   "w-12 h-12 rounded-xl flex items-center justify-center text-xl",
-                  ing.category === 'perecedero' ? "bg-red-500/20" : "bg-blue-500/20"
+                  ing.categoria?.nombre === 'perecedero' ? "bg-red-500/20" : "bg-blue-500/20"
                 )}>
-                  {ing.category === 'perecedero' ? '🥩' : '📦'}
+                  {ing.icono ? ing.icono : (ing.categoria?.nombre === 'perecedero' ? '🥩' : '📦')}
                 </div>
                 <div>
-                  <p className="font-medium text-white">{ing.name}</p>
+                  <p className="font-medium text-white">{ing.nombre}</p>
                   <div className="flex items-center gap-3 text-sm">
                     <span className={clsx(
                       "font-semibold",
-                      isLowStock(ing) ? "text-red-400" : "text-emerald-400"
+                      parseFloat(ing.stock_actual) <= parseFloat(ing.stock_minimo) ? "text-red-400" : "text-emerald-400"
                     )}>
-                      {ing.stock} {ing.unit}
+                      {formatQuantity(ing.stock_actual)} {ing.unidad_medida}
                     </span>
                     <span className="text-gray-500">
-                      (mín: {ing.minStock})
+                      (mín: {formatQuantity(ing.stock_minimo)})
                     </span>
                     <span className="text-gray-500">
-                      Bs. {ing.costPerUnit}/{ing.unit}
+                      Bs. {ing.costo_unitario}/{ing.unidad_medida}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
@@ -268,12 +387,12 @@ const AdminInventoryContent = () => {
                         ⚠️ VENCIDO
                       </span>
                     )}
-                    {!isExpired(ing) && isExpiring(ing) && (
+                    {!isExpired(ing) && ing.fecha_vencimiento && getDaysUntilExpiry(ing.fecha_vencimiento) <= 7 && (
                       <span className="px-2 py-0.5 rounded text-xs bg-amber-500/30 text-amber-400">
-                        ⏰ Vence en {getDaysUntilExpiry(ing.expiryDate)} días
+                        ⏰ Vence en {getDaysUntilExpiry(ing.fecha_vencimiento)} días
                       </span>
                     )}
-                    {isLowStock(ing) && (
+                    {parseFloat(ing.stock_actual) <= parseFloat(ing.stock_minimo) && (
                       <span className="px-2 py-0.5 rounded text-xs bg-red-500/20 text-red-400">
                         📉 Stock bajo
                       </span>
@@ -299,7 +418,11 @@ const AdminInventoryContent = () => {
             </motion.div>
           ))}
         </AnimatePresence>
+        {!loading && filteredIngredients.length === 0 && (
+            <div className="text-center py-12 text-gray-500">No se encontraron ingredientes</div>
+        )}
       </div>
+      )}
 
       {/* Modal */}
       <AnimatePresence>
@@ -332,19 +455,48 @@ const AdminInventoryContent = () => {
                   <label className="text-sm text-gray-400">Nombre</label>
                   <input
                     type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                    value={formData.nombre}
+                    onChange={(e) => setFormData(prev => ({ ...prev, nombre: e.target.value }))}
                     className="w-full mt-1 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-amber-500/50"
                   />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-400 mb-2 block">Icono</label>
+                  <div className="flex flex-wrap gap-2 p-3 rounded-xl bg-white/5 border border-white/10 max-h-32 overflow-y-auto">
+                    {EMOJI_LIST.map(emoji => (
+                      <button
+                        key={emoji}
+                        onClick={() => setFormData(prev => ({ ...prev, icono: emoji }))}
+                        className={clsx(
+                          "w-8 h-8 flex items-center justify-center rounded-lg text-lg transition-colors",
+                          formData.icono === emoji 
+                            ? "bg-amber-500 text-white" 
+                            : "hover:bg-white/10 text-gray-400"
+                        )}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                  {/* Custom input fallback */}
+                  <div className="mt-2">
+                    <input 
+                        type="text" 
+                        placeholder="O escribe tu propio emoji..." 
+                        value={formData.icono}
+                        onChange={(e) => setFormData(prev => ({ ...prev, icono: e.target.value }))}
+                        className="w-full px-3 py-1.5 text-sm rounded-lg bg-white/5 border border-white/10 text-white focus:outline-none focus:border-amber-500/50"
+                    />
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm text-gray-400">Stock Actual</label>
                     <input
                       type="number"
-                      step="0.1"
-                      value={formData.stock}
-                      onChange={(e) => setFormData(prev => ({ ...prev, stock: e.target.value }))}
+                      step="0.001"
+                      value={formData.stock_actual}
+                      onChange={(e) => setFormData(prev => ({ ...prev, stock_actual: e.target.value }))}
                       className="w-full mt-1 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-amber-500/50"
                     />
                   </div>
@@ -352,9 +504,9 @@ const AdminInventoryContent = () => {
                     <label className="text-sm text-gray-400">Stock Mínimo</label>
                     <input
                       type="number"
-                      step="0.1"
-                      value={formData.minStock}
-                      onChange={(e) => setFormData(prev => ({ ...prev, minStock: e.target.value }))}
+                      step="0.001"
+                      value={formData.stock_minimo}
+                      onChange={(e) => setFormData(prev => ({ ...prev, stock_minimo: e.target.value }))}
                       className="w-full mt-1 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-amber-500/50"
                     />
                   </div>
@@ -363,15 +515,17 @@ const AdminInventoryContent = () => {
                   <div>
                     <label className="text-sm text-gray-400">Unidad</label>
                     <select
-                      value={formData.unit}
-                      onChange={(e) => setFormData(prev => ({ ...prev, unit: e.target.value }))}
+                      value={formData.unidad_medida}
+                      onChange={(e) => setFormData(prev => ({ ...prev, unidad_medida: e.target.value }))}
                       className="w-full mt-1 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-amber-500/50"
                     >
-                      <option value="kg">Kilogramo (kg)</option>
-                      <option value="lt">Litro (lt)</option>
-                      <option value="unidad">Unidad</option>
-                      <option value="paquete">Paquete</option>
-                      <option value="botella">Botella</option>
+                      <option className="bg-[#1a1a1f] text-white" value="kg">Kilogramo (kg)</option>
+                      <option className="bg-[#1a1a1f] text-white" value="lt">Litro (lt)</option>
+                      <option className="bg-[#1a1a1f] text-white" value="unidad">Unidad</option>
+                      <option className="bg-[#1a1a1f] text-white" value="paquete">Paquete</option>
+                      <option className="bg-[#1a1a1f] text-white" value="botella">Botella</option>
+                      <option className="bg-[#1a1a1f] text-white" value="gr">Gramo (gr)</option>
+                      <option className="bg-[#1a1a1f] text-white" value="ml">Mililitro (ml)</option>
                     </select>
                   </div>
                   <div>
@@ -379,8 +533,8 @@ const AdminInventoryContent = () => {
                     <input
                       type="number"
                       step="0.01"
-                      value={formData.costPerUnit}
-                      onChange={(e) => setFormData(prev => ({ ...prev, costPerUnit: e.target.value }))}
+                      value={formData.costo_unitario}
+                      onChange={(e) => setFormData(prev => ({ ...prev, costo_unitario: e.target.value }))}
                       className="w-full mt-1 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-amber-500/50"
                     />
                   </div>
@@ -388,40 +542,34 @@ const AdminInventoryContent = () => {
                 <div>
                   <label className="text-sm text-gray-400">Categoría</label>
                   <div className="grid grid-cols-2 gap-2 mt-1">
-                    <button
-                      onClick={() => setFormData(prev => ({ ...prev, category: 'perecedero' }))}
-                      className={clsx(
-                        "p-3 rounded-xl border flex items-center gap-2 transition-all",
-                        formData.category === 'perecedero' 
-                          ? "bg-red-500/20 border-red-500/50 text-red-400" 
-                          : "bg-white/5 border-white/10 text-gray-400"
-                      )}
-                    >
-                      <span>🥩</span>
-                      <span className="text-sm">Perecedero</span>
-                    </button>
-                    <button
-                      onClick={() => setFormData(prev => ({ ...prev, category: 'no_perecedero' }))}
-                      className={clsx(
-                        "p-3 rounded-xl border flex items-center gap-2 transition-all",
-                        formData.category === 'no_perecedero' 
-                          ? "bg-blue-500/20 border-blue-500/50 text-blue-400" 
-                          : "bg-white/5 border-white/10 text-gray-400"
-                      )}
-                    >
-                      <span>📦</span>
-                      <span className="text-sm">No Perecedero</span>
-                    </button>
+                    {categories.map(cat => (
+                        <button
+                            key={cat.id}
+                            onClick={() => setFormData(prev => ({ ...prev, categoria_id: cat.id }))}
+                            className={clsx(
+                                "p-3 rounded-xl border flex items-center gap-2 transition-all",
+                                formData.categoria_id === cat.id 
+                                ? clsx("bg-opacity-20 border-opacity-50", cat.nombre === 'perecedero' ? "bg-red-500 border-red-500 text-red-400" : "bg-blue-500 border-blue-500 text-blue-400")
+                                : "bg-white/5 border-white/10 text-gray-400"
+                            )}
+                        >
+                            <span>{cat.nombre === 'perecedero' ? '🥩' : '📦'}</span>
+                            <span className="text-sm capitalize">{cat.nombre.replace('_', ' ')}</span>
+                        </button>
+                    ))}
                   </div>
                 </div>
                 <div>
                   <label className="text-sm text-gray-400">Fecha de Vencimiento</label>
-                  <input
-                    type="date"
-                    value={formData.expiryDate}
-                    onChange={(e) => setFormData(prev => ({ ...prev, expiryDate: e.target.value }))}
-                    className="w-full mt-1 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-amber-500/50"
-                  />
+                  <div className="relative">
+                    <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
+                    <input
+                        type="date"
+                        value={formData.fecha_vencimiento}
+                        onChange={(e) => setFormData(prev => ({ ...prev, fecha_vencimiento: e.target.value }))}
+                        className="w-full mt-1 pl-10 pr-4 py-2 rounded-xl bg-white/5 border border-white/10 text-white focus:outline-none focus:border-amber-500/50"
+                    />
+                  </div>
                 </div>
               </div>
               
@@ -434,9 +582,10 @@ const AdminInventoryContent = () => {
                 </button>
                 <button
                   onClick={handleSave}
-                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white font-medium flex items-center justify-center gap-2"
+                  disabled={formLoading}
+                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white font-medium flex items-center justify-center gap-2 disabled:opacity-50"
                 >
-                  <Save size={16} />
+                  {formLoading ? <Loader2 className="animate-spin" /> : <Save size={16} />}
                   Guardar
                 </button>
               </div>
@@ -445,14 +594,6 @@ const AdminInventoryContent = () => {
         )}
       </AnimatePresence>
     </div>
-  );
-};
-
-const AdminInventory = () => {
-  return (
-    <RestaurantProvider>
-      <AdminInventoryContent />
-    </RestaurantProvider>
   );
 };
 

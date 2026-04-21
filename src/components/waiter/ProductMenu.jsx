@@ -1,21 +1,56 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRestaurant } from '../../context/RestaurantContext';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Check, ShoppingBag } from 'lucide-react';
 import { clsx } from 'clsx';
 
-const categories = [
-  { id: 'entradas', label: 'Entradas', short: '🥗' },
-  { id: 'platos', label: 'Platos', short: '🍖' },
-  { id: 'bebidas', label: 'Bebidas', short: '🍹' },
-  { id: 'postres', label: 'Postres', short: '🍰' },
-];
+// Category mapping based on backend category names
+const categoryConfig = {
+  'Entradas': { label: 'Entradas', short: '🥗' },
+  'Platos Fuertes': { label: 'Platos', short: '🍖' },
+  'Bebidas': { label: 'Bebidas', short: '🍹' },
+  'Postres': { label: 'Postres', short: '🍰' },
+};
 
 const ProductMenu = () => {
   const { products, addToCart, cart, selectedTable, orderMode } = useRestaurant();
-  const [activeCategory, setActiveCategory] = useState('entradas');
+  
+  // Get unique categories from products
+  const categories = [...new Set(products.map(p => p.category))].filter(Boolean);
+  // Default active category is first available, or empty string
+  const [activeCategory, setActiveCategory] = useState(categories[0] || '');
+
+  // Ensure activeCategory is valid when categories change
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActiveCategory(current => {
+      if (categories.length > 0 && !categories.includes(current)) {
+        return categories[0];
+      }
+      return current;
+    });
+  }, [categories]);
 
   const filteredProducts = products.filter(p => p.category === activeCategory);
+
+  // Category display configuration
+  const getCategoryInfo = (catName) => {
+    const config = categoryConfig[catName];
+    if (config) return config;
+    // Fallback
+    return { label: catName, short: '🍽️' };
+  };
+
+  // Sort categories according to desired order
+  const categoryOrder = ['Entradas', 'Platos Fuertes', 'Bebidas', 'Postres'];
+  const sortedCategories = categories.slice().sort((a, b) => {
+    const idxA = categoryOrder.indexOf(a);
+    const idxB = categoryOrder.indexOf(b);
+    if (idxA === -1 && idxB === -1) return a.localeCompare(b);
+    if (idxA === -1) return 1;
+    if (idxB === -1) return -1;
+    return idxA - idxB;
+  });
 
   const isInCart = (productId) => {
     return cart.some(item => item.product.id === productId);
@@ -59,24 +94,27 @@ const ProductMenu = () => {
 
       {/* Category Tabs - Responsivo */}
       <div className="grid grid-cols-4 gap-1 sm:gap-2">
-        {categories.map((cat) => (
-          <motion.button
-            key={cat.id}
-            whileTap={{ scale: 0.95 }}
-            onClick={() => setActiveCategory(cat.id)}
-            className={clsx(
-              "flex flex-col items-center gap-0.5 sm:gap-1 py-1.5 sm:py-2 px-1 sm:px-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-medium transition-all",
-              activeCategory === cat.id
-                ? isTakeaway
-                  ? "bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg shadow-orange-500/25"
-                  : "bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-amber-500/25"
-                : "bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-white/10"
-            )}
-          >
-            <span className="text-base sm:text-lg">{cat.short}</span>
-            <span className="truncate w-full text-center">{cat.label}</span>
-          </motion.button>
-        ))}
+        {sortedCategories.map((catName) => {
+          const info = getCategoryInfo(catName);
+          return (
+            <motion.button
+              key={catName}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setActiveCategory(catName)}
+              className={clsx(
+                "flex flex-col items-center gap-0.5 sm:gap-1 py-1.5 sm:py-2 px-1 sm:px-2 rounded-lg sm:rounded-xl text-[10px] sm:text-xs font-medium transition-all",
+                activeCategory === catName
+                  ? isTakeaway
+                    ? "bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-lg shadow-orange-500/25"
+                    : "bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-amber-500/25"
+                  : "bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white border border-white/10"
+              )}
+            >
+              <span className="text-base sm:text-lg">{info.short}</span>
+              <span className="truncate w-full text-center">{info.label}</span>
+            </motion.button>
+          );
+        })}
       </div>
 
       {/* Products Grid - Responsivo */}

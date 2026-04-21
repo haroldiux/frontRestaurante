@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { motion } from 'framer-motion';
 import { 
@@ -6,6 +6,8 @@ import {
   Clock, ArrowUpRight, ArrowDownRight, MoreHorizontal,
   Bell, Calendar, ChevronRight
 } from 'lucide-react';
+import api from '../services/api';
+import { Skeleton, SkeletonStats, SkeletonCard, SkeletonTable } from '../components/Skeleton';
 
 const Dashboard = () => {
   const { user } = useAuth();
@@ -28,51 +30,109 @@ const Dashboard = () => {
     return 'Buenas noches';
   };
 
-  const stats = [
-    { 
-      label: 'Ventas del día', 
-      value: '$12,450', 
-      change: '+12.5%', 
-      positive: true,
-      icon: DollarSign,
-      gradient: 'from-emerald-500 to-green-600',
-      glow: 'shadow-emerald-500/20'
-    },
-    { 
-      label: 'Pedidos activos', 
-      value: '24', 
-      change: '+3', 
-      positive: true,
-      icon: ShoppingBag,
-      gradient: 'from-amber-500 to-orange-600',
-      glow: 'shadow-amber-500/20'
-    },
-    { 
-      label: 'Clientes hoy', 
-      value: '156', 
-      change: '-5%', 
-      positive: false,
-      icon: Users,
-      gradient: 'from-violet-500 to-purple-600',
-      glow: 'shadow-violet-500/20'
-    },
-    { 
-      label: 'Tiempo promedio', 
-      value: '18min', 
-      change: '-2min', 
-      positive: true,
-      icon: Clock,
-      gradient: 'from-cyan-500 to-blue-600',
-      glow: 'shadow-cyan-500/20'
-    },
-  ];
+  const [dashboardStats, setDashboardStats] = useState([]);
+  const [recentOrders, setRecentOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const recentOrders = [
-    { id: '#2847', table: 'Mesa 5', status: 'En preparación', time: 'Hace 3 min', amount: '$45.00' },
-    { id: '#2846', table: 'Mesa 12', status: 'Servido', time: 'Hace 8 min', amount: '$78.50' },
-    { id: '#2845', table: 'Mesa 3', status: 'Pagado', time: 'Hace 15 min', amount: '$124.00' },
-    { id: '#2844', table: 'Mesa 8', status: 'En preparación', time: 'Hace 18 min', amount: '$67.25' },
-  ];
+  const fetchDashboardData = async () => {
+    try {
+      // Obtener reportes del día
+      const reportsRes = await api.get('/reports?period=day');
+      const reportsData = reportsRes.data;
+      
+      // Obtener pedidos recientes (últimos 4)
+      const ordersRes = await api.get('/orders?estado=pendiente,preparando,listo,servido');
+      const allOrders = ordersRes.data;
+      
+      // Calcular pedidos activos (pendiente + preparando)
+      const activeOrders = allOrders.filter(o => o.estado === 'pendiente' || o.estado === 'preparando').length;
+      
+      // Obtener tiempo de espera estimado
+      const waitingRes = await api.get('/waiting-time');
+      const waitingData = waitingRes.data;
+      const avgTime = `${waitingData.minutes}min`;
+      
+      // Construir stats
+      const revenueChange = reportsData.changes?.revenue ?? 0;
+      const clientsChange = reportsData.changes?.clients ?? 0;
+      const ordersChange = reportsData.changes?.orders ?? 0;
+      const statsData = [
+        { 
+          label: 'Ventas del día', 
+          value: `Bs. ${Number(reportsData.stats.revenue).toLocaleString('es-BO')}`, 
+          change: `${revenueChange >= 0 ? '+' : ''}${revenueChange.toFixed(1)}%`,
+          positive: revenueChange >= 0,
+          icon: DollarSign,
+          gradient: 'from-emerald-500 to-green-600',
+          glow: 'shadow-emerald-500/20'
+        },
+        { 
+          label: 'Pedidos activos', 
+          value: activeOrders.toString(), 
+          change: `${ordersChange >= 0 ? '+' : ''}${ordersChange.toFixed(1)}%`,
+          positive: ordersChange >= 0,
+          icon: ShoppingBag,
+          gradient: 'from-amber-500 to-orange-600',
+          glow: 'shadow-amber-500/20'
+        },
+        { 
+          label: 'Clientes hoy', 
+          value: reportsData.stats.clients.toString(), 
+          change: `${clientsChange >= 0 ? '+' : ''}${clientsChange.toFixed(1)}%`,
+          positive: clientsChange >= 0,
+          icon: Users,
+          gradient: 'from-violet-500 to-purple-600',
+          glow: 'shadow-violet-500/20'
+        },
+        { 
+          label: 'Tiempo promedio', 
+          value: avgTime, 
+          change: '', // TODO: implementar cambio real de tiempo promedio
+          positive: true,
+          icon: Clock,
+          gradient: 'from-cyan-500 to-blue-600',
+          glow: 'shadow-cyan-500/20'
+        },
+      ];
+      setDashboardStats(statsData);
+      
+      // Transformar pedidos recientes
+      const recentOrdersData = allOrders
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        .slice(0, 4)
+        .map(order => {
+          const timeDiff = Math.floor((new Date() - new Date(order.created_at)) / (1000 * 60));
+          const timeText = timeDiff < 1 ? 'Hace un momento' : `Hace ${timeDiff} min`;
+          
+          const statusMap = {
+            'pendiente': 'En preparación',
+            'preparando': 'En preparación',
+            'listo': 'Servido',
+            'servido': 'Servido',
+            'pagado': 'Pagado',
+            'cancelado': 'Cancelado'
+          };
+          
+          return {
+            id: `#${order.id}`,
+            table: order.mesa ? `Mesa ${order.mesa.numero}` : 'Para Llevar',
+            status: statusMap[order.estado] || 'En preparación',
+            time: timeText,
+            amount: `Bs. ${Number(order.total).toLocaleString('es-BO', { minimumFractionDigits: 2 })}`
+          };
+        });
+      setRecentOrders(recentOrdersData);
+      
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, []);
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -136,7 +196,18 @@ const Dashboard = () => {
 
       {/* Stats Grid */}
       <motion.div variants={item} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((stat, index) => (
+         {loading ? (
+           Array.from({ length: 4 }).map((_, idx) => (
+             <div key={idx} className="p-6 rounded-2xl bg-white/[0.03] backdrop-blur-sm border border-white/10 animate-pulse">
+               <div className="h-10 bg-white/10 rounded-xl mb-4"></div>
+               <div className="space-y-2">
+                 <div className="h-4 bg-white/10 rounded w-1/2"></div>
+                 <div className="h-8 bg-white/10 rounded w-3/4"></div>
+               </div>
+             </div>
+           ))
+         ) : (
+           dashboardStats.map((stat) => (
           <motion.div
             key={stat.label}
             variants={item}
@@ -166,8 +237,8 @@ const Dashboard = () => {
               </div>
             </div>
           </motion.div>
-        ))}
-      </motion.div>
+         )))}
+       </motion.div>
 
       {/* Main Content Grid */}
       <div className="grid lg:grid-cols-3 gap-6">
@@ -186,39 +257,61 @@ const Dashboard = () => {
             </button>
           </div>
           
-          <div className="space-y-3">
-            {recentOrders.map((order, index) => (
-              <motion.div
-                key={order.id}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.6 + index * 0.1 }}
-                whileHover={{ x: 5 }}
-                className="flex items-center justify-between p-4 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 hover:border-white/10 transition-all cursor-pointer group"
-              >
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center text-sm font-bold text-white">
-                    {order.table.split(' ')[1]}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-white">{order.id}</span>
-                      <span className="text-gray-600">•</span>
-                      <span className="text-sm text-gray-400">{order.table}</span>
-                    </div>
-                    <span className="text-xs text-gray-500">{order.time}</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(order.status)}`}>
-                    {order.status}
-                  </span>
-                  <span className="text-sm font-semibold text-white">{order.amount}</span>
-                  <ChevronRight size={16} className="text-gray-600 group-hover:text-white transition-colors" />
-                </div>
-              </motion.div>
-            ))}
-          </div>
+           <div className="space-y-3">
+             {loading ? (
+               Array.from({ length: 4 }).map((_, idx) => (
+                 <div key={idx} className="flex items-center justify-between p-4 rounded-xl bg-white/[0.02] border border-white/5 animate-pulse">
+                   <div className="flex items-center gap-4">
+                     <div className="w-10 h-10 rounded-xl bg-white/10"></div>
+                     <div className="space-y-2">
+                       <div className="h-4 bg-white/10 rounded w-24"></div>
+                       <div className="h-3 bg-white/10 rounded w-16"></div>
+                     </div>
+                   </div>
+                   <div className="flex items-center gap-4">
+                     <div className="h-6 bg-white/10 rounded-full w-20"></div>
+                     <div className="h-6 bg-white/10 rounded w-16"></div>
+                   </div>
+                 </div>
+               ))
+             ) : recentOrders.length > 0 ? (
+               recentOrders.map((order, index) => (
+                 <motion.div
+                   key={order.id}
+                   initial={{ opacity: 0, x: -20 }}
+                   animate={{ opacity: 1, x: 0 }}
+                   transition={{ delay: 0.6 + index * 0.1 }}
+                   whileHover={{ x: 5 }}
+                   className="flex items-center justify-between p-4 rounded-xl bg-white/[0.02] hover:bg-white/[0.05] border border-white/5 hover:border-white/10 transition-all cursor-pointer group"
+                 >
+                   <div className="flex items-center gap-4">
+                     <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-gray-700 to-gray-800 flex items-center justify-center text-sm font-bold text-white">
+                       {order.table.includes('Mesa') ? order.table.split(' ')[1] : 'PL'}
+                     </div>
+                     <div>
+                       <div className="flex items-center gap-2">
+                         <span className="text-sm font-medium text-white">{order.id}</span>
+                         <span className="text-gray-600">•</span>
+                         <span className="text-sm text-gray-400">{order.table}</span>
+                       </div>
+                       <span className="text-xs text-gray-500">{order.time}</span>
+                     </div>
+                   </div>
+                   <div className="flex items-center gap-4">
+                     <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(order.status)}`}>
+                       {order.status}
+                     </span>
+                     <span className="text-sm font-semibold text-white">{order.amount}</span>
+                     <ChevronRight size={16} className="text-gray-600 group-hover:text-white transition-colors" />
+                   </div>
+                 </motion.div>
+               ))
+             ) : (
+               <div className="text-center py-6 text-gray-500">
+                 No hay pedidos recientes
+               </div>
+             )}
+           </div>
         </motion.div>
 
         {/* Quick Actions / Activity */}

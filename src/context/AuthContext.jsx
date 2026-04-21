@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import api from '../services/api';
+/* eslint-disable react-refresh/only-export-components */
 
 const AuthContext = createContext(null);
 
@@ -9,29 +11,52 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Simular verificación de sesión al cargar
-    const storedUser = localStorage.getItem('restaurant_user');
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
+    const token = localStorage.getItem('token');
+    if (token) {
+      api.get('/auth/me')
+        .then(response => {
+          setUser({
+              ...response.data,
+              name: response.data.nombre,
+              role: response.data.rol?.nombre // Mapear rol de backend a frontend
+          });
+        })
+        .catch(() => {
+          localStorage.removeItem('token');
+        })
+        .finally(() => setLoading(false));
+    } else {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
-  const login = (role) => {
-    // Simular login
-    const newUser = {
-      id: Math.random().toString(36).substr(2, 9),
-      name: `Usuario ${role.charAt(0).toUpperCase() + role.slice(1)}`,
-      role: role, // 'admin', 'waiter', 'kitchen', 'cashier', 'client'
-      online: true
-    };
-    setUser(newUser);
-    localStorage.setItem('restaurant_user', JSON.stringify(newUser));
+  const login = async (email, password) => {
+    try {
+      const response = await api.post('/auth/login', { email, password });
+      const { access_token, user } = response.data;
+      
+      localStorage.setItem('token', access_token);
+      setUser({
+          ...user,
+          name: user.nombre,
+          role: user.rol?.nombre
+      });
+      return true;
+    } catch (error) {
+      console.error('Login error:', error);
+      return false;
+    }
   };
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('restaurant_user');
+  const logout = async () => {
+    try {
+        await api.post('/auth/logout');
+    } catch (error) {
+        console.error('Logout error', error);
+    } finally {
+        setUser(null);
+        localStorage.removeItem('token');
+    }
   };
 
   const value = {

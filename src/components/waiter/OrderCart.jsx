@@ -7,6 +7,7 @@ import {
   Banknote, QrCode, CreditCard, Check
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import MockCardCheckoutModal from '../payments/MockCardCheckoutModal';
 
 const PAYMENT_METHODS = [
   { id: 'cash', label: 'Efectivo', icon: Banknote, color: 'emerald' },
@@ -34,6 +35,7 @@ const OrderCart = () => {
     takeawayCustomer,
     setTakeawayCustomer,
     initiateQRPayment,
+    startTableCardCheckout,
   } = useRestaurant();
   
   const [expandedNotes, setExpandedNotes] = useState(null);
@@ -44,7 +46,8 @@ const OrderCart = () => {
   const [showConfirmCancelReservation, setShowConfirmCancelReservation] = useState(false);
   const [activeTab, setActiveTab] = useState('cart');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('cash');
-  const [qrPaymentSent, setQrPaymentSent] = useState(false);
+  const [, setQrPaymentSent] = useState(false);
+  const [mockSession, setMockSession] = useState(null);
 
   const handleSendOrder = async () => {
     if (orderMode === 'takeaway' && (!takeawayCustomer.name || !takeawayCustomer.phone)) {
@@ -53,7 +56,7 @@ const OrderCart = () => {
     
     setIsSending(true);
     await new Promise(resolve => setTimeout(resolve, 1500));
-    const success = sendOrderToKitchen();
+    const success = await sendOrderToKitchen();
     if (success) {
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -63,20 +66,19 @@ const OrderCart = () => {
 
   const tableTotal = selectedTable ? getTableTotal(selectedTable.id) : 0;
 
-  const handlePayTable = () => {
+  const handlePayTable = async () => {
     if (selectedPaymentMethod === 'qr') {
-      // Enviar QR al cliente
-      initiateQRPayment(selectedTable.id, tableTotal);
+      await initiateQRPayment(selectedTable.id, tableTotal);
       setQrPaymentSent(true);
       setShowConfirmPay(false);
-      // El pago se confirma cuando el cliente paga (simulado con timeout para demo)
-      setTimeout(() => {
-        payTable(selectedTable.id);
-        setQrPaymentSent(false);
-      }, 10000); // Auto-confirma en 10s para demo
+    } else if (selectedPaymentMethod === 'card') {
+      const session = await startTableCardCheckout(selectedTable.id);
+      if (session?.checkout_token) {
+        setMockSession(session);
+        setShowConfirmPay(false);
+      }
     } else {
-      // Pago directo (efectivo/tarjeta)
-      payTable(selectedTable.id);
+      await payTable(selectedTable.id, selectedPaymentMethod);
       setShowConfirmPay(false);
     }
   };
@@ -543,6 +545,17 @@ const OrderCart = () => {
           )}
         </div>
       </div>
+
+      <MockCardCheckoutModal
+        open={Boolean(mockSession)}
+        session={mockSession}
+        amount={tableTotal}
+        title={selectedTable ? `Tarjeta - Mesa ${selectedTable.number}` : 'Pago con tarjeta'}
+        onClose={() => setMockSession(null)}
+        onSuccess={() => {
+          setMockSession(null);
+        }}
+      />
     </>
   );
 };

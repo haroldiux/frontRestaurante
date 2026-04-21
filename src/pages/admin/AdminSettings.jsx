@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
@@ -6,10 +6,14 @@ import {
   Globe, Bell, Palette, Shield, CreditCard
 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useRestaurant } from '../../context/RestaurantContext';
 
 const AdminSettings = () => {
+  const { getSettings, updateSettings } = useRestaurant();
   const [activeTab, setActiveTab] = useState('general');
   const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   
   const [settings, setSettings] = useState({
     // General
@@ -41,9 +45,39 @@ const AdminSettings = () => {
     tipSuggestions: [10, 15, 20],
   });
 
-  const handleSave = () => {
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        setLoading(true);
+        const data = await getSettings();
+        if (data && Object.keys(data).length > 0) {
+          setSettings(prev => ({
+            ...prev,
+            ...data,
+          }));
+        }
+        setError(null);
+      } catch (err) {
+        console.error('Error cargando configuración:', err);
+        setError('No se pudieron cargar las configuraciones. Usando valores predeterminados.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadSettings();
+  }, [getSettings]);
+
+  const handleSave = async () => {
+    try {
+      await updateSettings(settings);
+      setSaved(true);
+      setError(null);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      console.error('Error guardando configuración:', err);
+      setError('No se pudieron guardar las configuraciones. Intenta de nuevo.');
+      setSaved(false);
+    }
   };
 
   const tabs = [
@@ -90,19 +124,33 @@ const AdminSettings = () => {
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
           onClick={handleSave}
+          disabled={loading || saved}
           className={clsx(
             "px-4 py-2 rounded-xl font-medium flex items-center gap-2 transition-all",
             saved 
               ? "bg-emerald-500 text-white" 
-              : "bg-gradient-to-r from-amber-500 to-orange-600 text-white"
+              : "bg-gradient-to-r from-amber-500 to-orange-600 text-white",
+            (loading || saved) && "opacity-50 cursor-not-allowed"
           )}
         >
           <Save size={18} />
-          <span>{saved ? '¡Guardado!' : 'Guardar'}</span>
+          <span>{saved ? '¡Guardado!' : (loading ? 'Cargando...' : 'Guardar')}</span>
         </motion.button>
-      </div>
+       </div>
 
-      {/* Tabs */}
+       {/* Loading & Error */}
+       {loading && (
+         <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
+           <p className="text-blue-400 text-sm">Cargando configuración...</p>
+         </div>
+       )}
+       {error && (
+         <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+           <p className="text-red-400 text-sm">{error}</p>
+         </div>
+       )}
+
+       {/* Tabs */}
       <div className="flex gap-1 p-1 bg-white/5 rounded-xl overflow-x-auto">
         {tabs.map(tab => {
           const Icon = tab.icon;
